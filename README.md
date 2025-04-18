@@ -1,7 +1,5 @@
 # MCP Yahoo Finance
 
-## Overview
-
 A Model Context Protocol (MCP) server for Yahoo Finance interaction. This server provides tools to get pricing, company information and more.
 
 > Please note that `mcp-yahoo-finance` is currently in early development. The functionality and available tools are subject to change and expansion as I continue to develop and improve the server.
