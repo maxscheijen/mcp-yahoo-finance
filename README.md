@@ -8,15 +8,30 @@ A Model Context Protocol (MCP) server for Yahoo Finance interaction. This server
 
 ## Installation
 
-Clone the repository to your machine.
+You don't need to manually install `mcp-yahoo-finance` if you use [`uv`](https://docs.astral.sh/uv/). We'll use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run `mcp-yahoo-finance`.
+
+I would recommend using this method if you simply want to use the MCP server.
+
+### Using pip
+
+Using `pip`.
+
+```sh
+pip install mcp-yahoo-finance
+```
+
+### Using Git
+
+You can also install the package after cloning the repository to your machine.
 
 ```sh
 git clone git@github.com:maxscheijen/mcp-yahoo-finance.git
+cd mcp-yahoo-finance
+uv sync
 ```
 
-In the future this server will be made available on PyPi.
-
 ## Configuration
+
 
 ### Claude Desktop
 
@@ -26,13 +41,8 @@ Add this to your `claude_desktop_config.json`:
 {
     "mcpServers": {
         "yahoo-finance": {
-            "command": "uv",
-            "args": [
-                "--directory",
-                "/path/to/repo",
-                "run",
-                "mcp-yahoo-finance"
-            ]
+            "command": "uvx",
+            "args": ["mcp-yahoo-finance"]
         }
     }
 }
@@ -46,13 +56,8 @@ Add this to your `.vscode/mcp.json`:
 {
     "servers": {
         "yahoo-finance": {
-            "command": "uv",
-            "args": [
-                "--directory",
-                "/path/to/repo",
-                "run",
-                "mcp-yahoo-finance"
-            ]
+            "command": "uvx",
+            "args": ["mcp-yahoo-finance"]
         }
     }
 }
