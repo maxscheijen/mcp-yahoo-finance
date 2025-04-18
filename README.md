@@ -2,6 +2,10 @@
 
 A Model Context Protocol (MCP) server for Yahoo Finance interaction. This server provides tools to get pricing, company information and more.
 
+<a href="https://glama.ai/mcp/servers/@maxscheijen/mcp-yahoo-finance">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@maxscheijen/mcp-yahoo-finance/badge" alt="Yahoo Finance MCP server" />
+</a>
+
 > Please note that `mcp-yahoo-finance` is currently in early development. The functionality and available tools are subject to change and expansion as I continue to develop and improve the server.
 
 ## Installation
