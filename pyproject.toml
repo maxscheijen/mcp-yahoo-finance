@@ -1,0 +1,46 @@
+[project]
+name = "mcp-yahoo-finance"
+version = "0.1.0"
+description = "A Model Context Protol (MCP) server providing tools to interact with Yahoo Finance for LLMs"
+readme = {file = "README.md", content-type = "text/markdown"}
+authors = [
+    { name = "Max Scheijen", email = "maxscheijen@protonmail.com" }
+]
+maintainers = [
+    {name = "Max Scheijen", email = "maxscheijen@protonmail.com"}
+]
+requires-python = ">=3.13"
+keywords = ["finance", "yahoo finance", "mcp", "llm", "automation"]
+license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "mcp>=1.6.0",
+    "yfinance>=0.2.55",
+]
+
+[project.scripts]
+mcp-yahoo-finance = "mcp_yahoo_finance:main"
+
+[project.urls]
+Homepage = "https://github.com/maxscheijen/mcp-yahoo-finance"
+Documentation = "https://github.com/maxscheijen/mcp-yahoo-finance"
+Repository = "https://github.com/maxscheijen/mcp-yahoo-finance.git"
+Issues = "https://github.com/maxscheijen/mcp-yahoo-finance/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.2.0",
+    "pytest-asyncio>=0.26.0",
+    "pytest>=8.3.5",
+    "ruff>=0.11.5",
+]
