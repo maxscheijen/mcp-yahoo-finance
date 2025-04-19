@@ -51,7 +51,7 @@ You can also use docker:
     "mcpServers": {
         "yahoo-finance": {
             "command": "docker",
-            "args": ["run", "-i", "--rm" "IMAGE"]
+            "args": ["run", "-i", "--rm", "IMAGE"]
         }
     }
 }
