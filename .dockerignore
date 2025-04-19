@@ -8,6 +8,7 @@
 .codeclimate.yml
 .travis.yml
 .taskcluster.yml
+.pre-commit-config.yaml
 
 # Docker
 docker-compose.yml
@@ -56,6 +57,11 @@ htmlcov/
 .cache
 nosetests.xml
 coverage.xml
+.pytest_cache/
+tests/
+
+# Linting
+.ruff_cache/
 
 # Translations
 *.mo
@@ -87,3 +93,6 @@ venv/
 
 # VS Code
 .vscode/
+
+# Other
+Makefile
