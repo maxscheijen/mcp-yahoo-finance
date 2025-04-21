@@ -77,3 +77,17 @@ Add this to your `.vscode/mcp.json`:
 1. "What is the stock price of Apple?"
 2. "What is the difference in stock price between Apple and Google?"
 3. "How much did the stock price of Apple change between 2024-01-01 and 2025-01-01?"
+
+## Build
+
+Docker:
+
+```sh
+docker build -t [IMAGE] .
+```
+
+## Test with MCP Inspector
+
+```sh
+npx @modelcontextprotocol/inspector uv run mcp-yahoo-finance
+```
