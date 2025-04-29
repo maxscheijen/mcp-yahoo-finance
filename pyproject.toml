@@ -1,6 +1,6 @@
 [project]
 name = "mcp-yahoo-finance"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Model Context Protol (MCP) server providing tools to interact with Yahoo Finance for LLMs"
 readme = {file = "README.md", content-type = "text/markdown"}
 authors = [
