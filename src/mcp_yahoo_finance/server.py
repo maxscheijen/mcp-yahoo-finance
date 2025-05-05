@@ -159,6 +159,19 @@ class YahooFinance:
         stock = Ticker(ticker=symbol, session=self.session)
         return json.dumps(stock.news, indent=2)
 
+    def get_recommendations(self, symbol: str) -> str:
+        """Get analyst recommendations for a given symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        stock = Ticker(ticker=symbol, session=self.session)
+        recommendations = stock.get_recommendations()
+        print(recommendations)
+        if isinstance(recommendations, pd.DataFrame):
+            return f"{recommendations.to_json(orient='records', indent=2)}"
+        return f"{recommendations}"
+
 
 async def serve() -> None:
     server = Server("mcp-yahoo-finance")
@@ -176,6 +189,7 @@ async def serve() -> None:
             generate_tool(yf.get_cashflow),
             generate_tool(yf.get_earning_dates),
             generate_tool(yf.get_news),
+            generate_tool(yf.get_recommendations),
         ]
 
     @server.call_tool()
@@ -208,6 +222,9 @@ async def serve() -> None:
             case "get_news":
                 price = yf.get_news(**args)
                 return [TextContent(type="text", text=price)]
+            case "get_recommendations":
+                recommendations = yf.get_recommendations(**args)
+                return [TextContent(type="text", text=recommendations)]
             case _:
                 raise ValueError(f"Unknown tool: {name}")
 
