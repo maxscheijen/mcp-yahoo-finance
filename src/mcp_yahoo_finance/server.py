@@ -13,8 +13,10 @@ from mcp_yahoo_finance.utils import generate_tool
 
 class YahooFinance:
     def __init__(self, session: Session | None = None, verify: bool = True) -> None:
-        self.session = session or Session()
-        self.session.verify = verify
+        self.session = session
+
+        if self.session:
+            self.session.verify = verify
 
     def get_current_stock_price(self, symbol: str) -> str:
         """Get the current stock price based on stock symbol.
