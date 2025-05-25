@@ -4,7 +4,6 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-yahoo-finance)
 ![PyPI - License](https://img.shields.io/pypi/l/mcp-yahoo-finance)
 
-
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for Yahoo Finance interaction. This server provides tools to get pricing, company information and more.
 
 > Please note that `mcp-yahoo-finance` is currently in early development. The functionality and available tools are subject to change and expansion as I continue to develop and improve the server.
@@ -14,6 +13,14 @@ A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for Yah
 You don't need to manually install `mcp-yahoo-finance` if you use [`uv`](https://docs.astral.sh/uv/). We'll use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run `mcp-yahoo-finance`.
 
 I would recommend using this method if you simply want to use the MCP server.
+
+### Installing via Smithery
+
+To install Yahoo Finance Data Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@maxscheijen/mcp-yahoo-finance):
+
+```bash
+npx -y @smithery/cli install @maxscheijen/mcp-yahoo-finance --client claude
+```
 
 ### Using pip
 
