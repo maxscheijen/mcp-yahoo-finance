@@ -82,6 +82,9 @@ Add this to your `.vscode/mcp.json`:
 1. "What is the stock price of Apple?"
 2. "What is the difference in stock price between Apple and Google?"
 3. "How much did the stock price of Apple change between 2024-01-01 and 2025-01-01?"
+4. "What are the available options expiration dates for AAPL?"
+5. "Show me the options chain for AAPL expiring on 2024-01-19"
+6. "What are the call and put options for Tesla?"
 
 ## Build
 
