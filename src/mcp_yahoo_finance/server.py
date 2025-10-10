@@ -174,6 +174,48 @@ class YahooFinance:
             return f"{recommendations.to_json(orient='records', indent=2)}"
         return f"{recommendations}"
 
+    def get_option_expiration_dates(self, symbol: str) -> str:
+        """Get available options expiration dates for a given stock symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        stock = Ticker(ticker=symbol, session=self.session)
+        expiration_dates = stock.options
+        return json.dumps(list(expiration_dates), indent=2)
+
+    def get_option_chain(self, symbol: str, expiration_date: str) -> str:
+        """Get options chain for a specific expiration date.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+            expiration_date (str): Options expiration date in YYYY-MM-DD format.
+        """
+        stock = Ticker(ticker=symbol, session=self.session)
+        option_chain = stock.option_chain(expiration_date)
+        
+        result = {
+            "calls": None,
+            "puts": None,
+            "underlying": option_chain.underlying
+        }
+        
+        if option_chain.calls is not None:
+            # Convert dates to strings for JSON serialization
+            calls_df = option_chain.calls.copy()
+            if 'lastTradeDate' in calls_df.columns:
+                calls_df['lastTradeDate'] = calls_df['lastTradeDate'].astype(str)
+            result["calls"] = calls_df.to_dict(orient='records')
+        
+        if option_chain.puts is not None:
+            # Convert dates to strings for JSON serialization
+            puts_df = option_chain.puts.copy()
+            if 'lastTradeDate' in puts_df.columns:
+                puts_df['lastTradeDate'] = puts_df['lastTradeDate'].astype(str)
+            result["puts"] = puts_df.to_dict(orient='records')
+        
+        return json.dumps(result, indent=2)
+
 
 async def serve() -> None:
     server = Server("mcp-yahoo-finance")
@@ -192,6 +234,8 @@ async def serve() -> None:
             generate_tool(yf.get_earning_dates),
             generate_tool(yf.get_news),
             generate_tool(yf.get_recommendations),
+            generate_tool(yf.get_option_expiration_dates),
+            generate_tool(yf.get_option_chain),
         ]
 
     @server.call_tool()
@@ -227,6 +271,12 @@ async def serve() -> None:
             case "get_recommendations":
                 recommendations = yf.get_recommendations(**args)
                 return [TextContent(type="text", text=recommendations)]
+            case "get_option_expiration_dates":
+                dates = yf.get_option_expiration_dates(**args)
+                return [TextContent(type="text", text=dates)]
+            case "get_option_chain":
+                chain = yf.get_option_chain(**args)
+                return [TextContent(type="text", text=chain)]
             case _:
                 raise ValueError(f"Unknown tool: {name}")
 

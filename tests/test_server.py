@@ -41,6 +41,9 @@ def client_tools() -> list[Tool]:
         "get_cashflow",
         "get_earning_dates",
         "get_news",
+        "get_recommendations",
+        "get_option_expiration_dates",
+        "get_option_chain",
     ],
 )
 async def test_list_tools(client_tools: list[Tool], tool_name) -> None:
