@@ -23,7 +23,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    "mcp>=1.6.0",
+    "mcp>=1.27.0",
     "yfinance>=0.2.55",
 ]
 
