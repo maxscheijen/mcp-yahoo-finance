@@ -46,7 +46,9 @@ def generate_tool(func: Any) -> Tool:
     for param_name, param in signature.parameters.items():
         param_type = (
             "number"
-            if param.annotation is float
+            if param.annotation in (float, int)
+            else "boolean"
+            if param.annotation is bool
             else "string"
             if param.annotation is str
             else "string"

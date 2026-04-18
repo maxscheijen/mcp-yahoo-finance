@@ -1,31 +1,29 @@
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.types import Tool
 
-
-@pytest.fixture
-def server_params():
-    return StdioServerParameters(command="mcp-yahoo-finance")
+from mcp_yahoo_finance.server import YahooFinance
+from mcp_yahoo_finance.utils import generate_tool
 
 
 @pytest.fixture
 def client_tools() -> list[Tool]:
-    server_params = StdioServerParameters(command="mcp-yahoo-finance")
-
-    async def _get_tools():
-        async with (
-            stdio_client(server_params) as (read, write),
-            ClientSession(read, write) as session,
-        ):
-            await session.initialize()
-            tool_list_result = await session.list_tools()
-            return tool_list_result.tools
-
-    return asyncio.run(_get_tools())
+    yf = YahooFinance()
+    return [
+        generate_tool(yf.get_current_stock_price),
+        generate_tool(yf.get_stock_price_by_date),
+        generate_tool(yf.get_stock_price_date_range),
+        generate_tool(yf.get_historical_stock_prices),
+        generate_tool(yf.get_dividends),
+        generate_tool(yf.get_income_statement),
+        generate_tool(yf.get_cashflow),
+        generate_tool(yf.get_earning_dates),
+        generate_tool(yf.get_news),
+        generate_tool(yf.get_recommendations),
+        generate_tool(yf.get_option_expiration_dates),
+        generate_tool(yf.get_option_chain),
+    ]
 
 
 @pytest.mark.asyncio
@@ -60,11 +58,14 @@ async def test_list_tools(client_tools: list[Tool], tool_name) -> None:
     ],
 )
 def test_get_stock_price_by_date(symbol, date, expected_price):
+    import pandas as pd
+
     from mcp_yahoo_finance.server import YahooFinance
 
-    mock_df = MagicMock()
-    mock_df.empty = False
-    mock_df.iloc.__getitem__.return_value = {"Close": float(expected_price)}
+    mock_row = pd.Series({"Close": float(expected_price)})
+
+    mock_df = pd.DataFrame({"Close": [float(expected_price)]})
+    mock_df.index = pd.DatetimeIndex(["2025-01-02"])
 
     with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
         mock_ticker = MagicMock()
