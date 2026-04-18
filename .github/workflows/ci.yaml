@@ -27,6 +27,10 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
 
+    - name: Update lockfile
+      run: |
+        uv lock
+
     - name: Install Dependencies
       run: |
         uv sync --locked --all-extras
