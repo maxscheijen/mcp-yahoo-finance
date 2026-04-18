@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.types import TextContent, Tool
+from mcp.types import Tool
 
 
 @pytest.fixture
