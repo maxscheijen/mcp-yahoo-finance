@@ -43,6 +43,8 @@ class YahooFinance:
         """
         stock = Ticker(ticker=symbol, session=self.session)
         price = stock.history(start=date, period="1d")
+        if price.empty:
+            return f"Error: No trading data found for {symbol} on {date}"
         return f"{price.iloc[0]['Close']:.4f}"
 
     def get_stock_price_date_range(
@@ -193,27 +195,23 @@ class YahooFinance:
         """
         stock = Ticker(ticker=symbol, session=self.session)
         option_chain = stock.option_chain(expiration_date)
-        
-        result = {
-            "calls": None,
-            "puts": None,
-            "underlying": option_chain.underlying
-        }
-        
+
+        result = {"calls": None, "puts": None, "underlying": option_chain.underlying}
+
         if option_chain.calls is not None:
             # Convert dates to strings for JSON serialization
             calls_df = option_chain.calls.copy()
-            if 'lastTradeDate' in calls_df.columns:
-                calls_df['lastTradeDate'] = calls_df['lastTradeDate'].astype(str)
-            result["calls"] = calls_df.to_dict(orient='records')
-        
+            if "lastTradeDate" in calls_df.columns:
+                calls_df["lastTradeDate"] = calls_df["lastTradeDate"].astype(str)
+            result["calls"] = calls_df.to_dict(orient="records")
+
         if option_chain.puts is not None:
             # Convert dates to strings for JSON serialization
             puts_df = option_chain.puts.copy()
-            if 'lastTradeDate' in puts_df.columns:
-                puts_df['lastTradeDate'] = puts_df['lastTradeDate'].astype(str)
-            result["puts"] = puts_df.to_dict(orient='records')
-        
+            if "lastTradeDate" in puts_df.columns:
+                puts_df["lastTradeDate"] = puts_df["lastTradeDate"].astype(str)
+            result["puts"] = puts_df.to_dict(orient="records")
+
         return json.dumps(result, indent=2)
 
 
