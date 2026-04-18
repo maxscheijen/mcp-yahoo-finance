@@ -43,6 +43,8 @@ class YahooFinance:
         """
         stock = Ticker(ticker=symbol, session=self.session)
         price = stock.history(start=date, period="1d")
+        if price.empty:
+            return f"Error: No trading data found for {symbol} on {date}"
         return f"{price.iloc[0]['Close']:.4f}"
 
     def get_stock_price_date_range(
