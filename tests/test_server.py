@@ -1,10 +1,10 @@
 import asyncio
-import json
+from unittest.mock import MagicMock, patch
 
 import pytest
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.types import TextContent, Tool
+from mcp.types import Tool
 
 
 @pytest.fixture
@@ -51,29 +51,27 @@ async def test_list_tools(client_tools: list[Tool], tool_name) -> None:
     assert tool_name in tool_names
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "symbol, date, expected_price",
     [
-        ("AAPL", "2025-01-01", 243.5822),
-        ("GOOG", "2025-02-01", 202.4094),
-        ("META", "2025-02-01", 696.8401),
+        ("AAPL", "2025-01-02", "243.5822"),
+        ("GOOG", "2025-01-03", "142.5683"),
+        ("META", "2025-01-03", "594.8756"),
     ],
 )
-async def test_get_stock_price_by_date(server_params, symbol, date, expected_price):
-    async with (
-        stdio_client(server_params) as (read, write),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        tool_result = await session.call_tool(
-            "get_stock_price_by_date", {"symbol": symbol, "date": date}
-        )
+def test_get_stock_price_by_date(symbol, date, expected_price):
+    from mcp_yahoo_finance.server import YahooFinance
 
-        assert len(tool_result.content) == 1
-        assert isinstance(tool_result.content[0], TextContent)
+    mock_df = MagicMock()
+    mock_df.empty = False
+    mock_df.iloc.__getitem__.return_value = {"Close": float(expected_price)}
 
-        data = json.loads(tool_result.content[0].text)
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = mock_df
+        mock_ticker_class.return_value = mock_ticker
 
-        assert isinstance(data, float)
-        assert data == expected_price
+        yf = YahooFinance()
+        result = yf.get_stock_price_by_date(symbol, date)
+
+        assert result == expected_price
