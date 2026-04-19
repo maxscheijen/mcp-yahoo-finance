@@ -62,8 +62,6 @@ def test_get_stock_price_by_date(symbol, date, expected_price):
 
     from mcp_yahoo_finance.server import YahooFinance
 
-    mock_row = pd.Series({"Close": float(expected_price)})
-
     mock_df = pd.DataFrame({"Close": [float(expected_price)]})
     mock_df.index = pd.DatetimeIndex(["2025-01-02"])
 
