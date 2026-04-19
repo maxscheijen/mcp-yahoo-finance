@@ -58,11 +58,12 @@ async def test_list_tools(client_tools: list[Tool], tool_name) -> None:
     ],
 )
 def test_get_stock_price_by_date(symbol, date, expected_price):
+    import pandas as pd
+
     from mcp_yahoo_finance.server import YahooFinance
 
-    mock_df = MagicMock()
-    mock_df.empty = False
-    mock_df.iloc.__getitem__.return_value = {"Close": float(expected_price)}
+    mock_df = pd.DataFrame({"Close": [float(expected_price)]})
+    mock_df.index = pd.DatetimeIndex(["2025-01-02"])
 
     with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
         mock_ticker = MagicMock()

@@ -100,7 +100,7 @@ class YahooFinance:
         return f"{dividends.to_json(orient='index')}"
 
     def get_income_statement(
-        self, symbol: str, freq: Literal["yearly", "quarterly", "trainling"] = "yearly"
+        self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
     ) -> str:
         """Get income statement for a given stock symbol.
 
@@ -120,8 +120,8 @@ class YahooFinance:
         return f"{income_statement}"
 
     def get_cashflow(
-        self, symbol: str, freq: Literal["yearly", "quarterly", "trainling"] = "yearly"
-    ):
+        self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
+    ) -> str:
         """Get cashflow for a given stock symbol.
 
         Args:
@@ -171,7 +171,6 @@ class YahooFinance:
         """
         stock = Ticker(ticker=symbol, session=self.session)
         recommendations = stock.get_recommendations()
-        print(recommendations)
         if isinstance(recommendations, pd.DataFrame):
             return f"{recommendations.to_json(orient='records', indent=2)}"
         return f"{recommendations}"
