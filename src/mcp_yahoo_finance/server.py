@@ -215,68 +215,45 @@ class YahooFinance:
         return json.dumps(result, indent=2)
 
 
+TOOL_REGISTRY: dict[str, callable] = {}
+
+
+def register_tools(yf: YahooFinance) -> None:
+    TOOL_REGISTRY.update(
+        {
+            "get_current_stock_price": yf.get_current_stock_price,
+            "get_stock_price_by_date": yf.get_stock_price_by_date,
+            "get_stock_price_date_range": yf.get_stock_price_date_range,
+            "get_historical_stock_prices": yf.get_historical_stock_prices,
+            "get_dividends": yf.get_dividends,
+            "get_income_statement": yf.get_income_statement,
+            "get_cashflow": yf.get_cashflow,
+            "get_earning_dates": yf.get_earning_dates,
+            "get_news": yf.get_news,
+            "get_recommendations": yf.get_recommendations,
+            "get_option_expiration_dates": yf.get_option_expiration_dates,
+            "get_option_chain": yf.get_option_chain,
+        }
+    )
+
+
 async def serve() -> None:
     server = Server("mcp-yahoo-finance")
     yf = YahooFinance()
+    register_tools(yf)
+
+    tools = [generate_tool(method) for method in TOOL_REGISTRY.values()]
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return [
-            generate_tool(yf.get_current_stock_price),
-            generate_tool(yf.get_stock_price_by_date),
-            generate_tool(yf.get_stock_price_date_range),
-            generate_tool(yf.get_historical_stock_prices),
-            generate_tool(yf.get_dividends),
-            generate_tool(yf.get_income_statement),
-            generate_tool(yf.get_cashflow),
-            generate_tool(yf.get_earning_dates),
-            generate_tool(yf.get_news),
-            generate_tool(yf.get_recommendations),
-            generate_tool(yf.get_option_expiration_dates),
-            generate_tool(yf.get_option_chain),
-        ]
+        return tools
 
     @server.call_tool()
     async def call_tool(name: str, args: dict[str, Any]) -> list[TextContent]:
-        match name:
-            case "get_current_stock_price":
-                price = yf.get_current_stock_price(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_stock_price_by_date":
-                price = yf.get_stock_price_by_date(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_stock_price_date_range":
-                price = yf.get_stock_price_date_range(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_historical_stock_prices":
-                price = yf.get_historical_stock_prices(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_dividends":
-                price = yf.get_dividends(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_income_statement":
-                price = yf.get_income_statement(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_cashflow":
-                price = yf.get_cashflow(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_earning_dates":
-                price = yf.get_earning_dates(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_news":
-                price = yf.get_news(**args)
-                return [TextContent(type="text", text=price)]
-            case "get_recommendations":
-                recommendations = yf.get_recommendations(**args)
-                return [TextContent(type="text", text=recommendations)]
-            case "get_option_expiration_dates":
-                dates = yf.get_option_expiration_dates(**args)
-                return [TextContent(type="text", text=dates)]
-            case "get_option_chain":
-                chain = yf.get_option_chain(**args)
-                return [TextContent(type="text", text=chain)]
-            case _:
-                raise ValueError(f"Unknown tool: {name}")
+        if name not in TOOL_REGISTRY:
+            raise ValueError(f"Unknown tool: {name}")
+        result = TOOL_REGISTRY[name](**args)
+        return [TextContent(type="text", text=result)]
 
     options = server.create_initialization_options()
     async with stdio_server() as (read_stream, write_stream):
