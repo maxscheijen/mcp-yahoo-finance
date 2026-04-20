@@ -15,9 +15,15 @@ from mcp_yahoo_finance.utils import generate_tool, validate_date, validate_symbo
 class YahooFinance:
     def __init__(self, session: Session | None = None, verify: bool = True) -> None:
         self.session = session
+        self._ticker_cache: dict[str, Ticker] = {}
 
         if self.session:
             self.session.verify = verify
+
+    def _get_ticker(self, symbol: str) -> Ticker:
+        if symbol not in self._ticker_cache:
+            self._ticker_cache[symbol] = Ticker(ticker=symbol, session=self.session)
+        return self._ticker_cache[symbol]
 
     def get_current_stock_price(self, symbol: str) -> str:
         """Get the current stock price based on stock symbol.
@@ -27,13 +33,15 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session).info
+            stock = self._get_ticker(symbol).info
             current_price = stock.get("regularMarketPrice") or stock.get("currentPrice")
             if current_price is None:
-                return f"Couldn't fetch {symbol} current price"
+                return f"Error: No price data found for {symbol}"
             return f"{current_price:.4f}"
+        except ValueError as e:
+            return f"Error: {str(e)}"
         except Exception as e:
-            return f"Error fetching {symbol}: {str(e)}"
+            return f"Error: Failed to fetch price for {symbol}: {str(e)}"
 
     def get_stock_price_by_date(self, symbol: str, date: str) -> str:
         """Get the stock price for a given stock symbol on a specific date.
@@ -45,13 +53,15 @@ class YahooFinance:
         try:
             symbol = validate_symbol(symbol=symbol)
             validate_date(date_str=date, param_name="date")
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             price = stock.history(start=date, period="1d")
             if price.empty:
                 return f"Error: No trading data found for {symbol} on {date}"
             return f"{price.iloc[0]['Close']:.4f}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch price for {symbol}: {str(e)}"
 
     def get_stock_price_date_range(
         self, symbol: str, start_date: str, end_date: str
@@ -68,7 +78,7 @@ class YahooFinance:
             validate_date(date_str=start_date, param_name="start_date")
             validate_date(date_str=end_date, param_name="end_date")
 
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             end = (
                 datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
             ).strftime("%Y-%m-%d")
@@ -77,8 +87,10 @@ class YahooFinance:
                 return f"Error: No trading data found for {symbol} between {start_date} and {end_date}"
             prices.index = prices.index.astype(str)
             return f"{prices['Close'].to_json(orient='index')}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch prices for {symbol}: {str(e)}"
 
     def get_historical_stock_prices(
         self,
@@ -99,7 +111,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             prices = stock.history(period=period, interval=interval)
             if prices.empty:
                 return f"Error: No historical data found for {symbol}"
@@ -107,8 +119,10 @@ class YahooFinance:
             if hasattr(prices.index, "date"):
                 prices.index = prices.index.date.astype(str)  # type: ignore
             return f"{prices['Close'].to_json(orient='index')}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch historical data for {symbol}: {str(e)}"
 
     def get_dividends(self, symbol: str) -> str:
         """Get dividends for a given stock symbol.
@@ -118,7 +132,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             dividends = stock.dividends
 
             if dividends.empty:
@@ -127,8 +141,10 @@ class YahooFinance:
             if hasattr(dividends.index, "date"):
                 dividends.index = dividends.index.date.astype(str)  # type: ignore
             return f"{dividends.to_json(orient='index')}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch dividends for {symbol}: {str(e)}"
 
     def get_income_statement(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
@@ -142,7 +158,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             income_statement = stock.get_income_stmt(freq=freq, pretty=True)
 
             if isinstance(income_statement, pd.DataFrame):
@@ -151,8 +167,10 @@ class YahooFinance:
                 ]
                 return f"{income_statement.to_json()}"
             return f"{income_statement}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch income statement for {symbol}: {str(e)}"
 
     def get_cashflow(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
@@ -166,15 +184,17 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             cashflow = stock.get_cashflow(freq=freq, pretty=True)
 
             if isinstance(cashflow, pd.DataFrame):
                 cashflow.columns = [str(col.date()) for col in cashflow.columns]
                 return f"{cashflow.to_json(indent=2)}"
             return f"{cashflow}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch cashflow for {symbol}: {str(e)}"
 
     def get_earning_dates(self, symbol: str, limit: int = 12) -> str:
         """Get earning dates.
@@ -188,15 +208,17 @@ class YahooFinance:
             symbol = validate_symbol(symbol=symbol)
             if limit < 1 or limit > 100:
                 return "Error: limit must be between 1 and 100"
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             earning_dates = stock.get_earnings_dates(limit=limit)
 
             if isinstance(earning_dates, pd.DataFrame):
                 earning_dates.index = earning_dates.index.date.astype(str)  # type: ignore
                 return f"{earning_dates.to_json(indent=2)}"
             return f"{earning_dates}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch earning dates for {symbol}: {str(e)}"
 
     def get_news(self, symbol: str) -> str:
         """Get news for a given stock symbol.
@@ -206,12 +228,14 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             if not stock.news:
                 return f"Error: No news found for {symbol}"
             return json.dumps(stock.news, indent=2)
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch news for {symbol}: {str(e)}"
 
     def get_recommendations(self, symbol: str) -> str:
         """Get analyst recommendations for a given symbol.
@@ -221,13 +245,15 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             recommendations = stock.get_recommendations()
             if isinstance(recommendations, pd.DataFrame):
                 return f"{recommendations.to_json(orient='records', indent=2)}"
             return f"{recommendations}"
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch recommendations for {symbol}: {str(e)}"
 
     def get_option_expiration_dates(self, symbol: str) -> str:
         """Get available options expiration dates for a given stock symbol.
@@ -237,13 +263,15 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             expiration_dates = stock.options
             if not expiration_dates:
                 return f"Error: No options data found for {symbol}"
             return json.dumps(list(expiration_dates), indent=2)
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch options for {symbol}: {str(e)}"
 
     def get_option_chain(self, symbol: str, expiration_date: str) -> str:
         """Get options chain for a specific expiration date.
@@ -255,7 +283,7 @@ class YahooFinance:
         try:
             symbol = validate_symbol(symbol=symbol)
             validate_date(date_str=expiration_date, param_name="expiration_date")
-            stock = Ticker(ticker=symbol, session=self.session)
+            stock = self._get_ticker(symbol)
             option_chain = stock.option_chain(expiration_date)
 
             def _convert_dates(df: pd.DataFrame) -> pd.DataFrame:
@@ -282,8 +310,10 @@ class YahooFinance:
                 )
 
             return json.dumps(result, indent=2)
-        except Exception as e:
+        except ValueError as e:
             return f"Error: {str(e)}"
+        except Exception as e:
+            return f"Error: Failed to fetch option chain for {symbol}: {str(e)}"
 
 
 TOOL_REGISTRY: dict[str, callable] = {}

@@ -1,6 +1,6 @@
 import inspect
 from datetime import datetime
-from typing import Any, Union, get_origin
+from typing import Any, Literal, Union, get_origin
 
 from mcp.types import Tool
 
@@ -42,6 +42,19 @@ def _infer_json_type(annotation: Any) -> str:
             if arg is type(None):
                 continue
             return _infer_json_type(arg)
+
+    if origin is list:
+        args = annotation.__args__
+        if args:
+            return _infer_json_type(args[0])
+        return "string"
+
+    if hasattr(annotation, "__origin__") and hasattr(annotation, "__args__"):
+        if annotation.__origin__ is Literal:
+            args = annotation.__args__
+            if args:
+                return _infer_json_type(type(args[0]))
+            return "string"
 
     if annotation in (int, float):
         return "number"
