@@ -26,6 +26,7 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session).info
             current_price = stock.get("regularMarketPrice") or stock.get("currentPrice")
             if current_price is None:
@@ -42,7 +43,7 @@ class YahooFinance:
             date (str): The date in YYYY-MM-DD format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             validate_date(date_str=date, param_name="date")
             stock = Ticker(ticker=symbol, session=self.session)
             price = stock.history(start=date, period="1d")
@@ -63,7 +64,7 @@ class YahooFinance:
             end_date (str): The end date in YYYY-MM-DD format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             validate_date(date_str=start_date, param_name="start_date")
             validate_date(date_str=end_date, param_name="end_date")
 
@@ -97,7 +98,7 @@ class YahooFinance:
                     Valid intervals: "1d", "5d", "1wk", "1mo", "3mo"
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             prices = stock.history(period=period, interval=interval)
             if prices.empty:
@@ -116,7 +117,7 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             dividends = stock.dividends
 
@@ -140,7 +141,7 @@ class YahooFinance:
                     Valid freqencies: "yearly", "quarterly", "trainling"
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             income_statement = stock.get_income_stmt(freq=freq, pretty=True)
 
@@ -164,7 +165,7 @@ class YahooFinance:
                     Valid freqencies: "yearly", "quarterly", "trainling"
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             cashflow = stock.get_cashflow(freq=freq, pretty=True)
 
@@ -184,7 +185,7 @@ class YahooFinance:
             limit (int): max amount of upcoming and recent earnings dates to return. Default value 12 should return next 4 quarters and last 8 quarters. Increase if more history is needed.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             if limit < 1 or limit > 100:
                 return "Error: limit must be between 1 and 100"
             stock = Ticker(ticker=symbol, session=self.session)
@@ -204,7 +205,7 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             if not stock.news:
                 return f"Error: No news found for {symbol}"
@@ -219,7 +220,7 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             recommendations = stock.get_recommendations()
             if isinstance(recommendations, pd.DataFrame):
@@ -235,7 +236,7 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             stock = Ticker(ticker=symbol, session=self.session)
             expiration_dates = stock.options
             if not expiration_dates:
@@ -252,7 +253,7 @@ class YahooFinance:
             expiration_date (str): Options expiration date in YYYY-MM-DD format.
         """
         try:
-            validate_symbol(symbol=symbol)
+            symbol = validate_symbol(symbol=symbol)
             validate_date(date_str=expiration_date, param_name="expiration_date")
             stock = Ticker(ticker=symbol, session=self.session)
             option_chain = stock.option_chain(expiration_date)
