@@ -1,4 +1,5 @@
 import inspect
+from datetime import datetime
 from typing import Any
 
 from mcp.types import Tool
@@ -65,3 +66,17 @@ def generate_tool(func: Any) -> Tool:
                 schema["inputSchema"]["required"].append(param_name)
 
     return Tool(**schema)
+
+
+def validate_symbol(symbol: str) -> str:
+    if not symbol or not isinstance(symbol, str):
+        raise ValueError("Symbol must be a non-empty string")
+    return symbol.upper().strip()
+
+
+def validate_date(date_str: str, param_name: str = "date") -> str:
+    try:
+        datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        raise ValueError(f"{param_name} must be in YYYY-MM-DD format")
+    return date_str
