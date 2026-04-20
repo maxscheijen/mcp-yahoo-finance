@@ -257,6 +257,13 @@ class YahooFinance:
             stock = Ticker(ticker=symbol, session=self.session)
             option_chain = stock.option_chain(expiration_date)
 
+            def _convert_dates(df: pd.DataFrame) -> pd.DataFrame:
+                if df is None or "lastTradeDate" not in df.columns:
+                    return df
+                df = df.copy()
+                df["lastTradeDate"] = df["lastTradeDate"].astype(str)
+                return df
+
             result = {
                 "calls": None,
                 "puts": None,
@@ -264,16 +271,14 @@ class YahooFinance:
             }
 
             if option_chain.calls is not None:
-                calls_df = option_chain.calls.copy()
-                if "lastTradeDate" in calls_df.columns:
-                    calls_df["lastTradeDate"] = calls_df["lastTradeDate"].astype(str)
-                result["calls"] = calls_df.to_dict(orient="records")
+                result["calls"] = _convert_dates(option_chain.calls).to_dict(
+                    orient="records"
+                )
 
             if option_chain.puts is not None:
-                puts_df = option_chain.puts.copy()
-                if "lastTradeDate" in puts_df.columns:
-                    puts_df["lastTradeDate"] = puts_df["lastTradeDate"].astype(str)
-                result["puts"] = puts_df.to_dict(orient="records")
+                result["puts"] = _convert_dates(option_chain.puts).to_dict(
+                    orient="records"
+                )
 
             return json.dumps(result, indent=2)
         except Exception as e:

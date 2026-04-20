@@ -1,6 +1,6 @@
 import inspect
 from datetime import datetime
-from typing import Any
+from typing import Any, Union, get_origin
 
 from mcp.types import Tool
 
@@ -29,6 +29,30 @@ def parse_docstring(docstring: str) -> dict[str, str]:
     return descriptions
 
 
+def _infer_json_type(annotation: Any) -> str:
+    """Infer JSON schema type from Python type annotation."""
+    if annotation is None or annotation is inspect.Parameter.empty:
+        return "string"
+
+    origin = get_origin(annotation)
+
+    if origin is Union:
+        args = annotation.__args__
+        for arg in args:
+            if arg is type(None):
+                continue
+            return _infer_json_type(arg)
+
+    if annotation in (int, float):
+        return "number"
+    if annotation is bool:
+        return "boolean"
+    if annotation is str:
+        return "string"
+
+    return "string"
+
+
 def generate_tool(func: Any) -> Tool:
     """Generates a tool schema from a Python function."""
     signature = inspect.signature(func)
@@ -45,15 +69,7 @@ def generate_tool(func: Any) -> Tool:
     }
 
     for param_name, param in signature.parameters.items():
-        param_type = (
-            "number"
-            if param.annotation in (float, int)
-            else "boolean"
-            if param.annotation is bool
-            else "string"
-            if param.annotation is str
-            else "string"
-        )
+        param_type = _infer_json_type(param.annotation)
         schema["inputSchema"]["properties"][param_name] = {
             "type": param_type,
             "description": param_descriptions.get(param_name, ""),
