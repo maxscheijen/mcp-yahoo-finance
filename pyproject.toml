@@ -2,13 +2,9 @@
 name = "mcp-yahoo-finance"
 version = "0.1.3"
 description = "A Model Context Protol (MCP) server providing tools to interact with Yahoo Finance for LLMs"
-readme = {file = "README.md", content-type = "text/markdown"}
-authors = [
-    { name = "Max Scheijen", email = "maxscheijen@protonmail.com" }
-]
-maintainers = [
-    {name = "Max Scheijen", email = "maxscheijen@protonmail.com"}
-]
+readme = { file = "README.md", content-type = "text/markdown" }
+authors = [{ name = "Max Scheijen", email = "maxscheijen@protonmail.com" }]
+maintainers = [{ name = "Max Scheijen", email = "maxscheijen@protonmail.com" }]
 requires-python = ">=3.10"
 keywords = ["finance", "yahoo finance", "mcp", "llm", "automation"]
 license = { text = "MIT" }
@@ -22,10 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = [
-    "mcp>=1.28.1",
-    "yfinance>=1.5.1",
-]
+dependencies = ["mcp>=1.28.1", "yfinance>=1.5.2"]
 
 [project.scripts]
 mcp-yahoo-finance = "mcp_yahoo_finance:main"
@@ -47,3 +40,6 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.15.22",
 ]
+
+[tool.ruff.lint]
+ignore = ["BLE001", "DTZ007"]

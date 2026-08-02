@@ -33,7 +33,7 @@ class YahooFinance:
                 return f"Couldn't fetch {symbol} current price"
             return f"{current_price:.4f}"
         except Exception as e:
-            return f"Error fetching {symbol}: {str(e)}"
+            return f"Error fetching {symbol}: {e!s}"
 
     def get_stock_price_by_date(self, symbol: str, date: str) -> str:
         """Get the stock price for a given stock symbol on a specific date.
@@ -51,7 +51,7 @@ class YahooFinance:
                 return f"Error: No trading data found for {symbol} on {date}"
             return f"{price.iloc[0]['Close']:.4f}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_stock_price_date_range(
         self, symbol: str, start_date: str, end_date: str
@@ -78,7 +78,7 @@ class YahooFinance:
             prices.index = prices.index.astype(str)
             return f"{prices['Close'].to_json(orient='index')}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_historical_stock_prices(
         self,
@@ -108,7 +108,7 @@ class YahooFinance:
                 prices.index = prices.index.date.astype(str)  # type: ignore
             return f"{prices['Close'].to_json(orient='index')}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_dividends(self, symbol: str) -> str:
         """Get dividends for a given stock symbol.
@@ -128,7 +128,7 @@ class YahooFinance:
                 dividends.index = dividends.index.date.astype(str)  # type: ignore
             return f"{dividends.to_json(orient='index')}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_income_statement(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
@@ -152,7 +152,7 @@ class YahooFinance:
                 return f"{income_statement.to_json()}"
             return f"{income_statement}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_cashflow(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
@@ -174,7 +174,7 @@ class YahooFinance:
                 return f"{cashflow.to_json(indent=2)}"
             return f"{cashflow}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_earning_dates(self, symbol: str, limit: int = 12) -> str:
         """Get earning dates.
@@ -196,7 +196,7 @@ class YahooFinance:
                 return f"{earning_dates.to_json(indent=2)}"
             return f"{earning_dates}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_news(self, symbol: str) -> str:
         """Get news for a given stock symbol.
@@ -211,7 +211,7 @@ class YahooFinance:
                 return f"Error: No news found for {symbol}"
             return json.dumps(stock.news, indent=2)
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_recommendations(self, symbol: str) -> str:
         """Get analyst recommendations for a given symbol.
@@ -227,7 +227,7 @@ class YahooFinance:
                 return f"{recommendations.to_json(orient='records', indent=2)}"
             return f"{recommendations}"
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_option_expiration_dates(self, symbol: str) -> str:
         """Get available options expiration dates for a given stock symbol.
@@ -243,7 +243,7 @@ class YahooFinance:
                 return f"Error: No options data found for {symbol}"
             return json.dumps(list(expiration_dates), indent=2)
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
     def get_option_chain(self, symbol: str, expiration_date: str) -> str:
         """Get options chain for a specific expiration date.
@@ -283,7 +283,7 @@ class YahooFinance:
 
             return json.dumps(result, indent=2)
         except Exception as e:
-            return f"Error: {str(e)}"
+            return f"Error: {e!s}"
 
 
 TOOL_REGISTRY: dict[str, callable] = {}
