@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["mcp>=1.28.1", "yfinance>=1.5.2"]
+dependencies = ["mcp>=2.0.0", "yfinance>=1.5.2"]
 
 [project.scripts]
 mcp-yahoo-finance = "mcp_yahoo_finance:main"
