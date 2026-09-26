@@ -590,28 +590,315 @@ class YahooFinance:
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
 
-    def get_option_chain(self, symbol: str, expiration_date: str) -> ToolResult:
-        """Get an option chain for a specific expiration date.
+    def get_option_chain(
+        self,
+        symbol: str,
+        expiration_date: str,
+        option_type: Literal["calls", "puts", "both"] = "both",
+        min_strike: float | None = None,
+        max_strike: float | None = None,
+        moneyness: Literal["itm", "otm", "atm"] | None = None,
+        min_open_interest: int | None = None,
+        min_volume: int | None = None,
+        max_bid_ask_spread: float | None = None,
+        limit: int = 100,
+    ) -> ToolResult:
+        """Get a filtered, bounded option chain for one expiration date.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
             expiration_date (str): Expiration date in YYYY-MM-DD format.
+            option_type (str): Return calls, puts, or both.
+            min_strike (float): Minimum strike price, inclusive.
+            max_strike (float): Maximum strike price, inclusive.
+            moneyness (str): Restrict results to in-the-money, out-of-the-money, or at-the-money contracts.
+            min_open_interest (int): Minimum open interest, inclusive.
+            min_volume (int): Minimum volume, inclusive.
+            max_bid_ask_spread (float): Maximum ask minus bid spread, inclusive.
+            limit (int): Maximum contracts returned per side, from 1 to 100.
         """
+        return self._get_option_chain(
+            symbol,
+            expiration_date,
+            option_type=option_type,
+            min_strike=min_strike,
+            max_strike=max_strike,
+            moneyness=moneyness,
+            min_open_interest=min_open_interest,
+            min_volume=min_volume,
+            max_bid_ask_spread=max_bid_ask_spread,
+            limit=limit,
+        )
+
+    @staticmethod
+    def _filter_option_frame(
+        frame: Any,
+        option_type: str,
+        underlying_price: float | None,
+        min_strike: float | None,
+        max_strike: float | None,
+        moneyness: str | None,
+        min_open_interest: int | None,
+        min_volume: int | None,
+        max_bid_ask_spread: float | None,
+        limit: int,
+    ) -> pd.DataFrame:
+        """Apply common option filters without mutating yfinance's frame."""
+        if not isinstance(frame, pd.DataFrame):
+            return pd.DataFrame()
+        result = frame.copy()
+
+        def numeric_filter(column: str, minimum: float | None) -> None:
+            nonlocal result
+            if minimum is not None and column in result:
+                result = result[
+                    pd.to_numeric(result[column], errors="coerce") >= minimum
+                ]
+
+        numeric_filter("strike", min_strike)
+        if max_strike is not None and "strike" in result:
+            result = result[
+                pd.to_numeric(result["strike"], errors="coerce") <= max_strike
+            ]
+        numeric_filter("openInterest", min_open_interest)
+        numeric_filter("volume", min_volume)
+
+        if max_bid_ask_spread is not None and {"bid", "ask"}.issubset(result.columns):
+            bid = pd.to_numeric(result["bid"], errors="coerce")
+            ask = pd.to_numeric(result["ask"], errors="coerce")
+            result = result[(ask - bid) <= max_bid_ask_spread]
+
+        if (
+            moneyness is not None
+            and underlying_price not in (None, 0)
+            and "strike" in result
+        ):
+            strikes = pd.to_numeric(result["strike"], errors="coerce")
+            if moneyness == "itm":
+                result = result[
+                    strikes < underlying_price
+                    if option_type == "calls"
+                    else strikes > underlying_price
+                ]
+            elif moneyness == "otm":
+                result = result[
+                    strikes > underlying_price
+                    if option_type == "calls"
+                    else strikes < underlying_price
+                ]
+            else:
+                result = result[
+                    ((strikes - underlying_price).abs() / underlying_price) <= 0.01
+                ]
+
+        return result.head(limit)
+
+    @staticmethod
+    def _option_underlying_price(underlying: Any) -> float | None:
+        if not isinstance(underlying, dict):
+            return None
+        for key in ("regularMarketPrice", "currentPrice", "price"):
+            value = underlying.get(key)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return None
+
+    def _get_option_chain(
+        self,
+        symbol: str,
+        expiration_date: str,
+        *,
+        option_type: Literal["calls", "puts", "both"],
+        min_strike: float | None,
+        max_strike: float | None,
+        moneyness: Literal["itm", "otm", "atm"] | None,
+        min_open_interest: int | None,
+        min_volume: int | None,
+        max_bid_ask_spread: float | None,
+        limit: int,
+    ) -> ToolResult:
         try:
             symbol = validate_symbol(symbol)
             validate_date(expiration_date, "expiration_date")
+            if option_type not in ("calls", "puts", "both"):
+                return error_result(
+                    "INVALID_ARGUMENT", "option_type must be calls, puts, or both"
+                )
+            if moneyness not in (None, "itm", "otm", "atm"):
+                return error_result(
+                    "INVALID_ARGUMENT", "moneyness must be itm, otm, or atm"
+                )
+            if not 1 <= limit <= 100:
+                return error_result(
+                    "INVALID_ARGUMENT", "limit must be between 1 and 100"
+                )
+            if (
+                min_strike is not None
+                and max_strike is not None
+                and min_strike > max_strike
+            ):
+                return error_result(
+                    "INVALID_ARGUMENT", "min_strike must be on or before max_strike"
+                )
+            if min_open_interest is not None and min_open_interest < 0:
+                return error_result(
+                    "INVALID_ARGUMENT", "min_open_interest must be non-negative"
+                )
+            if min_volume is not None and min_volume < 0:
+                return error_result(
+                    "INVALID_ARGUMENT", "min_volume must be non-negative"
+                )
+            if max_bid_ask_spread is not None and max_bid_ask_spread < 0:
+                return error_result(
+                    "INVALID_ARGUMENT", "max_bid_ask_spread must be non-negative"
+                )
+
+            source_timestamp = datetime.now(timezone.utc).isoformat()
             chain = Ticker(ticker=symbol, session=self.session).option_chain(
                 expiration_date
+            )
+            underlying = to_json_compatible(chain.underlying)
+            underlying_price = self._option_underlying_price(underlying)
+            calls = (
+                self._filter_option_frame(
+                    chain.calls,
+                    "calls",
+                    underlying_price,
+                    min_strike,
+                    max_strike,
+                    moneyness,
+                    min_open_interest,
+                    min_volume,
+                    max_bid_ask_spread,
+                    limit,
+                )
+                if option_type in ("calls", "both")
+                else pd.DataFrame()
+            )
+            puts = (
+                self._filter_option_frame(
+                    chain.puts,
+                    "puts",
+                    underlying_price,
+                    min_strike,
+                    max_strike,
+                    moneyness,
+                    min_open_interest,
+                    min_volume,
+                    max_bid_ask_spread,
+                    limit,
+                )
+                if option_type in ("puts", "both")
+                else pd.DataFrame()
             )
             return {
                 "symbol": symbol,
                 "expirationDate": expiration_date,
-                "underlying": to_json_compatible(chain.underlying),
-                "calls": _records(chain.calls) if chain.calls is not None else [],
-                "puts": _records(chain.puts) if chain.puts is not None else [],
+                "sourceTimestamp": source_timestamp,
+                "underlying": underlying,
+                "calls": _records(calls),
+                "puts": _records(puts),
             }
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
+
+    def get_option_summary(
+        self,
+        symbol: str,
+        expiration_date: str,
+        limit: int = 100,
+    ) -> ToolResult:
+        """Summarize option interest, volume, volatility, ratios, and max pain.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+            expiration_date (str): Expiration date in YYYY-MM-DD format.
+            limit (int): Maximum contracts considered per side, from 1 to 100.
+        """
+        try:
+            chain = self._get_option_chain(
+                symbol,
+                expiration_date,
+                option_type="both",
+                min_strike=None,
+                max_strike=None,
+                moneyness=None,
+                min_open_interest=None,
+                min_volume=None,
+                max_bid_ask_spread=None,
+                limit=limit,
+            )
+            if "error" in chain:
+                return chain
+            calls = pd.DataFrame(chain["calls"])
+            puts = pd.DataFrame(chain["puts"])
+
+            def total(frame: pd.DataFrame, column: str) -> float | int | None:
+                if column not in frame:
+                    return None
+                values = pd.to_numeric(frame[column], errors="coerce").dropna()
+                if values.empty:
+                    return None
+                value = values.sum()
+                return (
+                    int(value) if column in ("openInterest", "volume") else float(value)
+                )
+
+            def average(frame: pd.DataFrame, column: str) -> float | None:
+                if column not in frame:
+                    return None
+                values = pd.to_numeric(frame[column], errors="coerce").dropna()
+                return float(values.mean()) if not values.empty else None
+
+            call_oi, put_oi = total(calls, "openInterest"), total(puts, "openInterest")
+            call_volume, put_volume = total(calls, "volume"), total(puts, "volume")
+            summary = {
+                "symbol": chain["symbol"],
+                "expirationDate": chain["expirationDate"],
+                "sourceTimestamp": chain["sourceTimestamp"],
+                "impliedVolatility": {
+                    "calls": average(calls, "impliedVolatility"),
+                    "puts": average(puts, "impliedVolatility"),
+                },
+                "openInterest": {"calls": call_oi, "puts": put_oi},
+                "volume": {"calls": call_volume, "puts": put_volume},
+                "putCallRatios": {
+                    "openInterest": (put_oi / call_oi) if call_oi else None,
+                    "volume": (put_volume / call_volume) if call_volume else None,
+                },
+                "maxPain": self._max_pain(calls, puts),
+            }
+            return to_json_compatible(summary)
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    @staticmethod
+    def _max_pain(calls: pd.DataFrame, puts: pd.DataFrame) -> float | None:
+        if "strike" not in calls or "strike" not in puts:
+            return None
+        strikes = sorted(set(pd.concat([calls["strike"], puts["strike"]]).dropna()))
+        if not strikes:
+            return None
+        call_strike = pd.to_numeric(calls["strike"], errors="coerce")
+        put_strike = pd.to_numeric(puts["strike"], errors="coerce")
+        call_oi = pd.to_numeric(
+            calls["openInterest"]
+            if "openInterest" in calls
+            else pd.Series(0, index=calls.index),
+            errors="coerce",
+        ).fillna(0)
+        put_oi = pd.to_numeric(
+            puts["openInterest"]
+            if "openInterest" in puts
+            else pd.Series(0, index=puts.index),
+            errors="coerce",
+        ).fillna(0)
+        pain = {
+            strike: ((strike - call_strike).clip(lower=0) * call_oi).sum()
+            + ((put_strike - strike).clip(lower=0) * put_oi).sum()
+            for strike in strikes
+        }
+        return float(min(pain, key=pain.get))
 
 
 TOOL_REGISTRY: dict[str, Any] = {}
@@ -636,6 +923,7 @@ def register_tools(yf: YahooFinance) -> None:
         "get_recommendations",
         "get_option_expiration_dates",
         "get_option_chain",
+        "get_option_summary",
     )
     TOOL_REGISTRY.update({name: getattr(yf, name) for name in names})
 

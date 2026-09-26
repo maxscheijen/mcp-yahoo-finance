@@ -149,7 +149,8 @@ symbols, such as `AAPL` or `MSFT`.
 | `get_news` | Bounded, normalized Yahoo Finance news with optional date filters |
 | `get_recommendations` | Analyst recommendations |
 | `get_option_expiration_dates` | Available option expirations |
-| `get_option_chain` | Calls and puts for one expiration date |
+| `get_option_chain` | Bounded calls and puts for one expiration date with strike, moneyness, liquidity, spread, type, and count filters |
+| `get_option_summary` | Implied volatility, open interest, volume, put/call ratios, and max-pain summary for one expiration |
 
 ## Local development
 
