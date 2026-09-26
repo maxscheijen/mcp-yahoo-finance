@@ -143,6 +143,11 @@ def _infer_json_schema(annotation: Any) -> dict[str, Any]:
     if annotation is str:
         return {"type": "string"}
 
+    if origin in (list, Sequence):
+        args = get_args(annotation)
+        item_schema = _infer_json_schema(args[0]) if args else {}
+        return {"type": "array", "items": item_schema}
+
     return {"type": "string"}
 
 

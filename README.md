@@ -135,6 +135,8 @@ symbols, such as `AAPL` or `MSFT`.
 | Tool | Purpose |
 | --- | --- |
 | `get_current_stock_price` | Current price and quote metadata |
+| `get_symbol_comparison` | Current quote comparison for up to 20 symbols |
+| `get_performance_analysis` | Bounded multi-symbol returns, moving averages, volatility, drawdown, benchmark-relative return, and correlation |
 | `get_stock_price_by_date` | Adjusted closing price for one trading date |
 | `get_stock_price_date_range` | Adjusted closing prices for an inclusive date range |
 | `get_historical_stock_prices` | Historical prices by period and interval |
@@ -151,6 +153,12 @@ symbols, such as `AAPL` or `MSFT`.
 | `get_option_expiration_dates` | Available option expirations |
 | `get_option_chain` | Bounded calls and puts for one expiration date with strike, moneyness, liquidity, spread, type, and count filters |
 | `get_option_summary` | Implied volatility, open interest, volume, put/call ratios, and max-pain summary for one expiration |
+
+Performance analysis uses split- and dividend-adjusted closes. Total return is
+`(last close / first close) - 1`; annualized volatility is the standard
+deviation of daily returns multiplied by `sqrt(252)`; maximum drawdown is the
+minimum drawdown from a running peak. Correlations use daily returns on shared
+trading dates, so symbols with unequal calendars remain comparable.
 
 ## Local development
 
