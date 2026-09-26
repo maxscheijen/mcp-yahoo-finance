@@ -12,6 +12,8 @@ def client_tools() -> list[Tool]:
     yf = YahooFinance()
     return [
         generate_tool(yf.get_current_stock_price),
+        generate_tool(yf.get_symbol_comparison),
+        generate_tool(yf.get_performance_analysis),
         generate_tool(yf.get_stock_price_by_date),
         generate_tool(yf.get_stock_price_date_range),
         generate_tool(yf.get_historical_stock_prices),
@@ -35,6 +37,8 @@ def client_tools() -> list[Tool]:
     "tool_name",
     [
         "get_current_stock_price",
+        "get_symbol_comparison",
+        "get_performance_analysis",
         "get_stock_price_by_date",
         "get_stock_price_date_range",
         "get_historical_stock_prices",
@@ -267,6 +271,63 @@ def test_current_price_includes_quote_metadata():
     assert result["price"] == 123.45
     assert result["currency"] == "USD"
     assert result["source"] == "Yahoo Finance"
+
+
+def test_symbol_comparison_is_bounded_and_keeps_missing_symbols():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.side_effect = [
+            MagicMock(info={"regularMarketPrice": 123.0, "currency": "USD"}),
+            MagicMock(info={}),
+        ]
+        result = YahooFinance().get_symbol_comparison(["aapl", "missing"])
+
+    assert result["symbols"] == ["AAPL", "MISSING"]
+    assert result["quotes"] == [
+        {"symbol": "AAPL", "price": 123.0, "currency": "USD", "exchange": None}
+    ]
+    assert result["errors"][0]["symbol"] == "MISSING"
+
+
+def test_performance_analysis_handles_unequal_calendars_and_benchmark():
+    import pandas as pd
+
+    frames = [
+        pd.DataFrame(
+            {"Close": [100.0, 110.0, 105.0]},
+            index=pd.DatetimeIndex(["2025-01-02", "2025-01-03", "2025-01-06"]),
+        ),
+        pd.DataFrame(
+            {"Close": [50.0, 55.0]},
+            index=pd.DatetimeIndex(["2025-01-02", "2025-01-06"]),
+        ),
+        pd.DataFrame(
+            {"Close": [200.0, 210.0, 205.0]},
+            index=pd.DatetimeIndex(["2025-01-02", "2025-01-03", "2025-01-06"]),
+        ),
+    ]
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.side_effect = [
+            MagicMock(history=MagicMock(return_value=frame)) for frame in frames
+        ]
+        result = YahooFinance().get_performance_analysis(
+            ["aapl", "msft"], "2025-01-01", "2025-01-07", "spy", limit=1
+        )
+
+    assert result["benchmark"] == "SPY"
+    assert result["analyses"][0]["totalReturn"] == pytest.approx(0.05)
+    assert result["analyses"][0]["benchmarkRelativeReturn"] == pytest.approx(0.025)
+    assert len(result["analyses"][0]["prices"]) == 1
+    assert result["correlation"]["AAPL"]["MSFT"] is None
+    assert result["calculationMethod"]["maxDrawdown"]
+
+
+def test_multi_symbol_schema_uses_arrays():
+    tool = generate_tool(YahooFinance().get_performance_analysis)
+    assert tool.input_schema["properties"]["symbols"] == {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "One to 10 Yahoo Finance symbols to analyze.",
+    }
 
 
 def test_news_is_normalized_bounded_and_supports_date_filters():

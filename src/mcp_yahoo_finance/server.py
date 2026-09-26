@@ -102,6 +102,182 @@ class YahooFinance:
         except Exception as exc:
             return error_result(_error_code(exc), f"Error fetching {symbol}: {exc}")
 
+    @staticmethod
+    def _validate_symbols(symbols: list[str], limit: int = 20) -> list[str]:
+        if not isinstance(symbols, list) or not symbols:
+            raise ValueError("symbols must be a non-empty list")
+        if len(symbols) > limit:
+            raise ValueError(f"symbols must contain at most {limit} symbols")
+        normalized = []
+        for symbol in symbols:
+            value = validate_symbol(symbol)
+            if value not in normalized:
+                normalized.append(value)
+        return normalized
+
+    def get_symbol_comparison(self, symbols: list[str]) -> ToolResult:
+        """Compare current quote data for multiple stock symbols.
+
+        Args:
+            symbols (list[str]): One to 20 Yahoo Finance symbols to compare.
+        """
+        try:
+            normalized = self._validate_symbols(symbols)
+            quotes, errors = [], []
+            for symbol in normalized:
+                try:
+                    info = Ticker(ticker=symbol, session=self.session).info
+                    price = info.get("regularMarketPrice") or info.get("currentPrice")
+                    if price is None:
+                        raise ValueError(f"No current price found for {symbol}")
+                    quotes.append(
+                        to_json_compatible(
+                            {
+                                "symbol": symbol,
+                                "price": price,
+                                "currency": info.get("currency"),
+                                "exchange": info.get("exchange"),
+                            }
+                        )
+                    )
+                except Exception as exc:
+                    errors.append({"symbol": symbol, "message": str(exc)})
+            if not quotes:
+                return error_result("NO_DATA", "No current quote data found")
+            result: ToolResult = {"symbols": normalized, "quotes": quotes}
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    @staticmethod
+    def _performance_metrics(prices: pd.Series) -> dict[str, Any]:
+        prices = pd.to_numeric(prices, errors="coerce").dropna()
+        returns = prices.pct_change().dropna()
+        cumulative = prices / prices.iloc[0] - 1
+        drawdown = prices / prices.cummax() - 1
+        return {
+            "startDate": prices.index[0].strftime("%Y-%m-%d"),
+            "endDate": prices.index[-1].strftime("%Y-%m-%d"),
+            "startPrice": prices.iloc[0],
+            "endPrice": prices.iloc[-1],
+            "totalReturn": cumulative.iloc[-1],
+            "annualizedVolatility": returns.std(ddof=1) * (252**0.5)
+            if len(returns) > 1
+            else None,
+            "maxDrawdown": drawdown.min(),
+            "movingAverages": {
+                str(window): prices.rolling(window).mean().iloc[-1]
+                for window in (20, 50)
+                if len(prices) >= window
+            },
+        }
+
+    def get_performance_analysis(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        benchmark_symbol: str | None = None,
+        limit: int = 100,
+    ) -> ToolResult:
+        """Analyze adjusted performance for multiple symbols over a date range.
+
+        Args:
+            symbols (list[str]): One to 10 Yahoo Finance symbols to analyze.
+            start_date (str): Inclusive start date in YYYY-MM-DD format.
+            end_date (str): Inclusive end date in YYYY-MM-DD format.
+            benchmark_symbol (str): Optional symbol used for relative return and correlation.
+            limit (int): Maximum price rows returned per symbol, from 1 to 500.
+        """
+        try:
+            normalized = self._validate_symbols(symbols, limit=10)
+            validate_date(start_date, "start_date")
+            validate_date(end_date, "end_date")
+            if start_date > end_date:
+                return error_result(
+                    "INVALID_ARGUMENT", "start_date must be on or before end_date"
+                )
+            if not 1 <= limit <= 500:
+                return error_result(
+                    "INVALID_ARGUMENT", "limit must be between 1 and 500"
+                )
+            benchmark = validate_symbol(benchmark_symbol) if benchmark_symbol else None
+            requested = normalized + (
+                [benchmark] if benchmark and benchmark not in normalized else []
+            )
+            series: dict[str, pd.Series] = {}
+            errors = []
+            for symbol in requested:
+                try:
+                    frame = Ticker(ticker=symbol, session=self.session).history(
+                        start=start_date, end=_next_date(end_date), auto_adjust=True
+                    )
+                    if (
+                        not isinstance(frame, pd.DataFrame)
+                        or frame.empty
+                        or "Close" not in frame
+                    ):
+                        raise ValueError(f"No historical data found for {symbol}")
+                    close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+                    close.index = pd.to_datetime(close.index).tz_localize(None)
+                    if close.empty:
+                        raise ValueError(f"No historical data found for {symbol}")
+                    series[symbol] = close
+                except Exception as exc:
+                    errors.append({"symbol": symbol, "message": str(exc)})
+            available = [symbol for symbol in normalized if symbol in series]
+            if not available:
+                return error_result(
+                    "NO_DATA", "No historical data found for requested symbols"
+                )
+
+            analyses = []
+            benchmark_metrics = (
+                self._performance_metrics(series[benchmark])
+                if benchmark in series
+                else None
+            )
+            for symbol in available:
+                close = series[symbol]
+                item = {"symbol": symbol, **self._performance_metrics(close)}
+                item["prices"] = [
+                    {"date": index.strftime("%Y-%m-%d"), "close": value}
+                    for index, value in close.tail(limit).items()
+                ]
+                if benchmark_metrics and symbol != benchmark:
+                    item["benchmarkRelativeReturn"] = (
+                        item["totalReturn"] - benchmark_metrics["totalReturn"]
+                    )
+                analyses.append(to_json_compatible(item))
+
+            returns = pd.concat(
+                {symbol: series[symbol].pct_change() for symbol in available}, axis=1
+            ).dropna(how="all")
+            result: ToolResult = {
+                "symbols": available,
+                "startDate": start_date,
+                "endDate": end_date,
+                "adjusted": True,
+                "calculationMethod": {
+                    "totalReturn": "(last adjusted close / first adjusted close) - 1",
+                    "annualizedVolatility": "standard deviation of daily returns * sqrt(252)",
+                    "maxDrawdown": "minimum of (close / running maximum close) - 1",
+                    "benchmarkRelativeReturn": "symbol total return - benchmark total return",
+                    "correlation": "Pearson correlation of daily returns on shared trading dates",
+                },
+                "analyses": analyses,
+                "correlation": to_json_compatible(returns.corr().round(6).to_dict()),
+            }
+            if benchmark and benchmark in series:
+                result["benchmark"] = benchmark
+            if errors:
+                result["errors"] = errors
+            return result
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
     def get_stock_price_by_date(self, symbol: str, date: str) -> ToolResult:
         """Get the stock price for a given stock symbol on a specific date.
 
@@ -908,6 +1084,8 @@ def register_tools(yf: YahooFinance) -> None:
     TOOL_REGISTRY.clear()
     names = (
         "get_current_stock_price",
+        "get_symbol_comparison",
+        "get_performance_analysis",
         "get_stock_price_by_date",
         "get_stock_price_date_range",
         "get_historical_stock_prices",
