@@ -32,7 +32,12 @@ def to_json_compatible(value: Any) -> Any:
 
 
 def dataframe_to_records(dataframe: Any) -> list[dict[str, Any]]:
-    """Serialize a dataframe while keeping its column names and index."""
+    """Serialize a dataframe while keeping columns and normalized date indexes.
+
+    Yahoo Finance may return either naive or timezone-aware ``DatetimeIndex``
+    values depending on the endpoint.  The public API exposes calendar dates
+    as ``YYYY-MM-DD`` so callers do not have to interpret provider timezones.
+    """
     frame = dataframe.copy()
     index_name = frame.index.name or (
         "date" if hasattr(frame.index, "date") else "index"
@@ -40,9 +45,33 @@ def dataframe_to_records(dataframe: Any) -> list[dict[str, Any]]:
     frame.index.name = index_name
     records = frame.reset_index().to_dict(orient="records")
     return [
-        {str(key): to_json_compatible(value) for key, value in record.items()}
+        {
+            str(key): (
+                _calendar_date(value)
+                if key == index_name and _is_datetime_value(value)
+                else to_json_compatible(value)
+            )
+            for key, value in record.items()
+        }
         for record in records
     ]
+
+
+def _is_datetime_value(value: Any) -> bool:
+    return isinstance(value, (datetime, date)) or (
+        hasattr(value, "to_pydatetime") and not isinstance(value, str)
+    )
+
+
+def _calendar_date(value: Any) -> str:
+    """Return a provider-independent calendar date from a datetime value."""
+    if hasattr(value, "tz_localize") and getattr(value, "tzinfo", None) is not None:
+        value = value.tz_localize(None)
+    elif isinstance(value, datetime) and value.tzinfo is not None:
+        value = value.replace(tzinfo=None)
+    if hasattr(value, "date"):
+        value = value.date()
+    return value.isoformat()
 
 
 def parse_docstring(docstring: str) -> dict[str, str]:

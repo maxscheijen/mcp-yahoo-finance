@@ -78,6 +78,35 @@ def test_get_stock_price_by_date(symbol, date, expected_price):
             "date": date,
             "close": float(expected_price),
         }
+        mock_ticker.history.assert_called_once_with(
+            start=date,
+            end=("2025-01-03" if date == "2025-01-02" else "2025-01-04"),
+            auto_adjust=True,
+        )
+
+
+def test_date_range_rejects_reversed_dates():
+    result = YahooFinance().get_stock_price_date_range(
+        "AAPL", "2025-01-03", "2025-01-02"
+    )
+    assert result == {
+        "error": {
+            "code": "INVALID_ARGUMENT",
+            "message": "start_date must be on or before end_date",
+        }
+    }
+
+
+def test_timezone_aware_indexes_use_calendar_dates():
+    import pandas as pd
+
+    from mcp_yahoo_finance.utils import dataframe_to_records
+
+    frame = pd.DataFrame(
+        {"Close": [10.5]},
+        index=pd.DatetimeIndex(["2025-01-02 23:30:00-05:00"]),
+    )
+    assert dataframe_to_records(frame) == [{"date": "2025-01-02", "Close": 10.5}]
 
 
 def test_structured_serialization_handles_dataframe_values():
@@ -96,8 +125,8 @@ def test_structured_serialization_handles_dataframe_values():
     records = dataframe_to_records(frame)
 
     assert json.loads(json.dumps(records)) == [
-        {"date": "2025-01-02T00:00:00", "Close": 10.5, "Volume": 100},
-        {"date": "2025-01-03T00:00:00", "Close": None, "Volume": 200},
+        {"date": "2025-01-02", "Close": 10.5, "Volume": 100},
+        {"date": "2025-01-03", "Close": None, "Volume": 200},
     ]
 
 
