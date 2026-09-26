@@ -342,3 +342,96 @@ def test_news_empty_after_filter_has_consistent_error_shape():
         result = YahooFinance().get_news("AAPL", start_date="2025-02-01")
 
     assert result == {"error": {"code": "NO_DATA", "message": "No news found for AAPL"}}
+
+
+def test_option_chain_is_bounded_and_exposes_filters_in_schema():
+    tool = generate_tool(YahooFinance().get_option_chain)
+    properties = tool.input_schema["properties"]
+
+    assert properties["option_type"]["enum"] == ["calls", "puts", "both"]
+    assert properties["moneyness"]["enum"] == ["itm", "otm", "atm"]
+    assert properties["limit"]["default"] == 100
+
+
+def test_option_chain_filters_calls_and_puts_and_normalizes_missing_values():
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    calls = pd.DataFrame(
+        {
+            "contractSymbol": ["C90", "C100", "C110"],
+            "strike": [90, 100, 110],
+            "bid": [11.0, 4.0, 1.0],
+            "ask": [12.0, 5.0, 3.0],
+            "volume": [10, 20, 30],
+            "openInterest": [200, 200, 300],
+            "impliedVolatility": [0.2, float("nan"), 0.4],
+        }
+    )
+    puts = pd.DataFrame(
+        {
+            "contractSymbol": ["P90", "P100", "P110"],
+            "strike": [90, 100, 110],
+            "bid": [1.0, 4.0, 11.0],
+            "ask": [2.0, 5.0, 12.0],
+            "volume": [5, 15, 25],
+            "openInterest": [50, 150, 250],
+        }
+    )
+    chain = SimpleNamespace(
+        underlying={"regularMarketPrice": 100}, calls=calls, puts=puts
+    )
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.option_chain.return_value = chain
+        result = YahooFinance().get_option_chain(
+            "aapl",
+            "2025-01-17",
+            option_type="calls",
+            moneyness="itm",
+            min_open_interest=150,
+            max_bid_ask_spread=1,
+            limit=1,
+        )
+
+    assert result["symbol"] == "AAPL"
+    assert result["expirationDate"] == "2025-01-17"
+    assert result["calls"][0]["contractSymbol"] == "C90"
+    assert result["puts"] == []
+    assert result["calls"][0]["impliedVolatility"] == 0.2
+    assert "sourceTimestamp" in result
+
+
+def test_option_summary_calculates_ratios_and_max_pain():
+    from types import SimpleNamespace
+
+    import pandas as pd
+
+    calls = pd.DataFrame(
+        {
+            "strike": [90, 100, 110],
+            "openInterest": [10, 20, 30],
+            "volume": [1, 2, 3],
+            "impliedVolatility": [0.2, 0.3, 0.4],
+        }
+    )
+    puts = pd.DataFrame(
+        {
+            "strike": [90, 100, 110],
+            "openInterest": [30, 20, 10],
+            "volume": [3, 2, 1],
+            "impliedVolatility": [0.4, 0.3, 0.2],
+        }
+    )
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.option_chain.return_value = SimpleNamespace(
+            underlying={"regularMarketPrice": 100}, calls=calls, puts=puts
+        )
+        result = YahooFinance().get_option_summary("AAPL", "2025-01-17")
+
+    assert result["openInterest"] == {"calls": 60, "puts": 60}
+    assert result["volume"] == {"calls": 6, "puts": 6}
+    assert result["putCallRatios"] == {"openInterest": 1.0, "volume": 1.0}
+    assert result["maxPain"] == 100.0
