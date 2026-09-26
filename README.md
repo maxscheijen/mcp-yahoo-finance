@@ -5,15 +5,14 @@
 ![PyPI - License](https://img.shields.io/pypi/l/mcp-yahoo-finance)
 
 
-A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for Yahoo Finance interaction. This server provides tools to get pricing, company information and more.
+A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for Yahoo Finance. It provides tools for prices, company information, historical data, financial statements, news, recommendations, earnings, dividends, and options.
 
-> Please note that `mcp-yahoo-finance` is currently in early development. The functionality and available tools are subject to change and expansion as I continue to develop and improve the server.
+> `mcp-yahoo-finance` is in early development. Tool names and response fields may change between releases.
 
 ## Installation
 
-You don't need to manually install `mcp-yahoo-finance` if you use [`uv`](https://docs.astral.sh/uv/). We'll use [`uvx`](https://docs.astral.sh/uv/guides/tools/) to directly run `mcp-yahoo-finance`.
-
-I would recommend using this method if you simply want to use the MCP server.
+You can run `mcp-yahoo-finance` without a separate install by using
+[`uvx`](https://docs.astral.sh/uv/guides/tools/).
 
 ### Using pip
 
@@ -121,14 +120,57 @@ default (split and dividend adjustments). `get_historical_stock_prices` accepts
 `adjusted: false` when unadjusted OHLC values are required. A single-date
 lookup and a date range use inclusive calendar dates; weekends and market
 holidays return a structured `NO_DATA` error when no trading row exists.
-Missing numeric values are represented as `null`.
+Missing numeric values are represented as `null`. News, recommendations,
+earnings, dividends, statements, and options use the same top-level `symbol`
+field and return provider-shaped data when it is available.
+
+## Available tools
+
+The server exposes these tools. `symbol` values use Yahoo Finance ticker
+symbols, such as `AAPL` or `MSFT`.
+
+| Tool | Purpose |
+| --- | --- |
+| `get_current_stock_price` | Current price and quote metadata |
+| `get_stock_price_by_date` | Adjusted closing price for one trading date |
+| `get_stock_price_date_range` | Adjusted closing prices for an inclusive date range |
+| `get_historical_stock_prices` | Historical prices by period and interval |
+| `get_dividends` | Dividend history |
+| `get_income_statement` | Income statement by yearly, quarterly, or trailing frequency |
+| `get_cashflow` | Cash-flow statement by frequency |
+| `get_earning_dates` | Recent and upcoming earnings dates |
+| `get_news` | Recent Yahoo Finance news |
+| `get_recommendations` | Analyst recommendations |
+| `get_option_expiration_dates` | Available option expirations |
+| `get_option_chain` | Calls and puts for one expiration date |
+
+## Local development
+
+Install the locked development environment with `uv sync`, then run:
+
+```sh
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv build
+```
+
+The Makefile provides shortcuts for the common commands:
+
+```sh
+make test
+make lint
+make docker-build
+```
+
+The test suite mocks Yahoo Finance and does not make live provider requests.
 
 ## Build
 
-Docker:
+Build the Docker image with:
 
 ```sh
-docker build -t [IMAGE] .
+docker build -t mcp-yahoo-finance .
 ```
 
 ## Test with MCP Inspector
@@ -136,3 +178,10 @@ docker build -t [IMAGE] .
 ```sh
 npx @modelcontextprotocol/inspector uv run mcp-yahoo-finance
 ```
+
+## Yahoo Finance limitations
+
+Yahoo Finance data is provided by a third party and may be delayed, incomplete,
+or unavailable. This project does not provide investment advice and does not
+guarantee the accuracy, completeness, or timeliness of returned data. Check
+important values against an authoritative source before relying on them.

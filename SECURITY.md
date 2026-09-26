@@ -1,21 +1,24 @@
-# Security Policy
+# Security policy
 
-## Supported Versions
+## Supported versions
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+Security fixes are provided for the latest `0.1.x` release.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| --- | --- |
+| `0.1.x` | Yes |
+| `< 0.1` | No |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-Use this section to tell people how to report a vulnerability.
+Please report vulnerabilities through [GitHub's private vulnerability
+reporting](https://github.com/maxscheijen/mcp-yahoo-finance/security/advisories/new).
+This keeps the report available only to the maintainers while we investigate.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+Include the affected version, a description of the impact, reproduction steps,
+and any suggested mitigation. Do not open a public issue for an unpatched
+vulnerability.
+
+We will acknowledge a report within seven days and keep the reporter informed
+as we assess and address it. We will credit reporters in the release notes
+unless they ask to remain anonymous.
