@@ -177,3 +177,78 @@ def test_current_price_includes_quote_metadata():
     assert result["price"] == 123.45
     assert result["currency"] == "USD"
     assert result["source"] == "Yahoo Finance"
+
+
+def test_news_is_normalized_bounded_and_supports_date_filters():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.get_news.return_value = [
+            {
+                "title": "Older story",
+                "link": "https://example.com/old",
+                "publisher": "Example",
+                "providerPublishTime": 1735689600,
+                "relatedTickers": ["msft", "AAPL", "AAPL"],
+            },
+            {
+                "content": {
+                    "title": "Current story",
+                    "canonicalUrl": {"url": "https://example.com/current"},
+                    "pubDate": "2025-01-03T12:00:00+02:00",
+                    "provider": {"displayName": "Publisher"},
+                    "thumbnail": {"originalUrl": "https://example.com/image"},
+                    "finance": {"tickerSymbols": ["aapl"]},
+                }
+            },
+            {"title": "Malformed"},
+        ]
+
+        result = YahooFinance().get_news(
+            "aapl", limit=1, start_date="2025-01-02", end_date="2025-01-03"
+        )
+        mock_ticker_class.return_value.get_news.assert_called_once_with(count=100)
+
+    assert result == {
+        "symbol": "AAPL",
+        "limit": 1,
+        "news": [
+            {
+                "title": "Current story",
+                "url": "https://example.com/current",
+                "publisher": "Publisher",
+                "publishedAt": "2025-01-03T10:00:00Z",
+                "thumbnail": "https://example.com/image",
+                "relatedSymbols": ["AAPL"],
+            }
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"limit": 0}, "limit must be between 1 and 100"),
+        (
+            {"start_date": "2025-01-03", "end_date": "2025-01-02"},
+            "start_date must be on or before end_date",
+        ),
+    ],
+)
+def test_news_rejects_invalid_filters(kwargs, message):
+    result = YahooFinance().get_news("AAPL", **kwargs)
+
+    assert result == {"error": {"code": "INVALID_ARGUMENT", "message": message}}
+
+
+def test_news_empty_after_filter_has_consistent_error_shape():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.get_news.return_value = [
+            {
+                "title": "Story",
+                "link": "https://example.com/story",
+                "providerPublishTime": 1735689600,
+            }
+        ]
+
+        result = YahooFinance().get_news("AAPL", start_date="2025-02-01")
+
+    assert result == {"error": {"code": "NO_DATA", "message": "No news found for AAPL"}}

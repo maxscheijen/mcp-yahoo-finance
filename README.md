@@ -120,7 +120,10 @@ default (split and dividend adjustments). `get_historical_stock_prices` accepts
 `adjusted: false` when unadjusted OHLC values are required. A single-date
 lookup and a date range use inclusive calendar dates; weekends and market
 holidays return a structured `NO_DATA` error when no trading row exists.
-Missing numeric values are represented as `null`. News, recommendations,
+Missing numeric values are represented as `null`. News is limited to 10
+articles by default (up to 100), normalizes title, URL, publisher, thumbnail,
+related symbols, and `publishedAt` as a UTC ISO 8601 timestamp, and accepts
+optional inclusive `start_date` and `end_date` filters. Recommendations,
 earnings, dividends, statements, and options use the same top-level `symbol`
 field and return provider-shaped data when it is available.
 
@@ -139,7 +142,7 @@ symbols, such as `AAPL` or `MSFT`.
 | `get_income_statement` | Income statement by yearly, quarterly, or trailing frequency |
 | `get_cashflow` | Cash-flow statement by frequency |
 | `get_earning_dates` | Recent and upcoming earnings dates |
-| `get_news` | Recent Yahoo Finance news |
+| `get_news` | Bounded, normalized Yahoo Finance news with optional date filters |
 | `get_recommendations` | Analyst recommendations |
 | `get_option_expiration_dates` | Available option expirations |
 | `get_option_chain` | Calls and puts for one expiration date |
