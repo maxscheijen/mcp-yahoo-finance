@@ -1,9 +1,48 @@
 import inspect
+import math
 import types
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import date, datetime
+from decimal import Decimal
+from enum import Enum
 from typing import Any, Literal, Union, get_args, get_origin
 
 from mcp.types import Tool
+
+
+def to_json_compatible(value: Any) -> Any:
+    """Convert common Yahoo Finance values into JSON-compatible values."""
+    if hasattr(value, "item"):
+        return to_json_compatible(value.item())
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return None if math.isnan(value) or math.isinf(value) else value
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, Enum):
+        return to_json_compatible(value.value)
+    if isinstance(value, Mapping):
+        return {str(key): to_json_compatible(item) for key, item in value.items()}
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return [to_json_compatible(item) for item in value]
+    return str(value)
+
+
+def dataframe_to_records(dataframe: Any) -> list[dict[str, Any]]:
+    """Serialize a dataframe while keeping its column names and index."""
+    frame = dataframe.copy()
+    index_name = frame.index.name or (
+        "date" if hasattr(frame.index, "date") else "index"
+    )
+    frame.index.name = index_name
+    records = frame.reset_index().to_dict(orient="records")
+    return [
+        {str(key): to_json_compatible(value) for key, value in record.items()}
+        for record in records
+    ]
 
 
 def parse_docstring(docstring: str) -> dict[str, str]:
