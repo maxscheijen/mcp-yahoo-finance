@@ -73,4 +73,78 @@ def test_get_stock_price_by_date(symbol, date, expected_price):
         yf = YahooFinance()
         result = yf.get_stock_price_by_date(symbol, date)
 
-        assert result == expected_price
+        assert result == {
+            "symbol": symbol,
+            "date": date,
+            "close": float(expected_price),
+        }
+
+
+def test_structured_serialization_handles_dataframe_values():
+    import json
+
+    import numpy as np
+    import pandas as pd
+
+    from mcp_yahoo_finance.utils import dataframe_to_records
+
+    frame = pd.DataFrame(
+        {"Close": [np.float64(10.5), np.nan], "Volume": [np.int64(100), np.int64(200)]},
+        index=pd.DatetimeIndex(["2025-01-02", "2025-01-03"]),
+    )
+
+    records = dataframe_to_records(frame)
+
+    assert json.loads(json.dumps(records)) == [
+        {"date": "2025-01-02T00:00:00", "Close": 10.5, "Volume": 100},
+        {"date": "2025-01-03T00:00:00", "Close": None, "Volume": 200},
+    ]
+
+
+def test_empty_result_has_consistent_error_shape():
+    import pandas as pd
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker = MagicMock()
+        mock_ticker.history.return_value = pd.DataFrame()
+        mock_ticker_class.return_value = mock_ticker
+
+        result = YahooFinance().get_historical_stock_prices("AAPL")
+
+    assert result == {
+        "error": {
+            "code": "NO_DATA",
+            "message": "No historical data found for AAPL",
+        }
+    }
+
+
+def test_tool_result_to_mcp_marks_structured_errors():
+    from mcp.types import CallToolResult
+
+    from mcp_yahoo_finance.server import tool_result_to_mcp
+
+    result = tool_result_to_mcp({"error": {"code": "NO_DATA", "message": "No data"}})
+
+    assert isinstance(result, CallToolResult)
+    assert result.structured_content == {
+        "error": {"code": "NO_DATA", "message": "No data"}
+    }
+    assert result.is_error is True
+
+
+def test_current_price_includes_quote_metadata():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.info = {
+            "regularMarketPrice": 123.45,
+            "currency": "USD",
+            "exchange": "NMS",
+            "regularMarketTime": 1735831800,
+        }
+
+        result = YahooFinance().get_current_stock_price("aapl")
+
+    assert result["symbol"] == "AAPL"
+    assert result["price"] == 123.45
+    assert result["currency"] == "USD"
+    assert result["source"] == "Yahoo Finance"

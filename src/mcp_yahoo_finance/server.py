@@ -1,41 +1,90 @@
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import pandas as pd
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.types import (
+    CallToolRequestParams,
+    CallToolResult,
+    ListToolsResult,
+    TextContent,
+)
 from requests import Session
 from yfinance import Ticker
 
-from mcp_yahoo_finance.utils import generate_tool, validate_date, validate_symbol
+from mcp_yahoo_finance.utils import (
+    dataframe_to_records,
+    generate_tool,
+    to_json_compatible,
+    validate_date,
+    validate_symbol,
+)
+
+ToolResult = dict[str, Any]
+
+
+def error_result(code: str, message: str) -> ToolResult:
+    """Return the common error shape used by every tool."""
+    return {"error": {"code": code, "message": message}}
+
+
+def _error_code(exc: Exception) -> str:
+    if isinstance(exc, ValueError):
+        return "INVALID_ARGUMENT"
+    return "UPSTREAM_ERROR"
+
+
+def _records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
+    return dataframe_to_records(dataframe)
+
+
+def tool_result_to_mcp(result: ToolResult) -> CallToolResult:
+    """Convert a tool result into MCP structured and readable content."""
+    is_error = "error" in result
+    text = result["error"]["message"] if is_error else json.dumps(result, indent=2)
+    return CallToolResult(
+        content=[TextContent(type="text", text=text)],
+        structuredContent=result,
+        isError=is_error,
+    )
 
 
 class YahooFinance:
     def __init__(self, session: Session | None = None, verify: bool = True) -> None:
         self.session = session
-
         if self.session:
             self.session.verify = verify
 
-    def get_current_stock_price(self, symbol: str) -> str:
+    def get_current_stock_price(self, symbol: str) -> ToolResult:
         """Get the current stock price based on stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session).info
-            current_price = stock.get("regularMarketPrice") or stock.get("currentPrice")
-            if current_price is None:
-                return f"Couldn't fetch {symbol} current price"
-            return f"{current_price:.4f}"
-        except Exception as e:
-            return f"Error fetching {symbol}: {e!s}"
+            symbol = validate_symbol(symbol)
+            info = Ticker(ticker=symbol, session=self.session).info
+            price = info.get("regularMarketPrice") or info.get("currentPrice")
+            if price is None:
+                return error_result("NO_DATA", f"No current price found for {symbol}")
+            result = {
+                "symbol": symbol,
+                "price": price,
+                "currency": info.get("currency"),
+                "exchange": info.get("exchange"),
+                "source": "Yahoo Finance",
+            }
+            if info.get("regularMarketTime"):
+                result["timestamp"] = datetime.fromtimestamp(
+                    info["regularMarketTime"], timezone.utc
+                ).isoformat()
+            return to_json_compatible(result)
+        except Exception as exc:
+            return error_result(_error_code(exc), f"Error fetching {symbol}: {exc}")
 
-    def get_stock_price_by_date(self, symbol: str, date: str) -> str:
+    def get_stock_price_by_date(self, symbol: str, date: str) -> ToolResult:
         """Get the stock price for a given stock symbol on a specific date.
 
         Args:
@@ -43,20 +92,27 @@ class YahooFinance:
             date (str): The date in YYYY-MM-DD format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            validate_date(date_str=date, param_name="date")
-            stock = Ticker(ticker=symbol, session=self.session)
-            price = stock.history(start=date, period="1d")
-            if price.empty:
-                return f"Error: No trading data found for {symbol} on {date}"
-            return f"{price.iloc[0]['Close']:.4f}"
-        except Exception as e:
-            return f"Error: {e!s}"
+            symbol = validate_symbol(symbol)
+            validate_date(date, "date")
+            prices = Ticker(ticker=symbol, session=self.session).history(
+                start=date, period="1d"
+            )
+            if prices.empty:
+                return error_result(
+                    "NO_DATA", f"No trading data found for {symbol} on {date}"
+                )
+            return {
+                "symbol": symbol,
+                "date": date,
+                "close": to_json_compatible(prices.iloc[0]["Close"]),
+            }
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
     def get_stock_price_date_range(
         self, symbol: str, start_date: str, end_date: str
-    ) -> str:
-        """Get the stock prices for a given date range for a given stock symbol.
+    ) -> ToolResult:
+        """Get stock prices for a symbol over an inclusive date range.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
@@ -64,21 +120,32 @@ class YahooFinance:
             end_date (str): The end date in YYYY-MM-DD format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            validate_date(date_str=start_date, param_name="start_date")
-            validate_date(date_str=end_date, param_name="end_date")
-
-            stock = Ticker(ticker=symbol, session=self.session)
+            symbol = validate_symbol(symbol)
+            validate_date(start_date, "start_date")
+            validate_date(end_date, "end_date")
+            if start_date > end_date:
+                return error_result(
+                    "INVALID_ARGUMENT", "start_date must be on or before end_date"
+                )
             end = (
                 datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
             ).strftime("%Y-%m-%d")
-            prices = stock.history(start=start_date, end=end)
+            prices = Ticker(ticker=symbol, session=self.session).history(
+                start=start_date, end=end
+            )
             if prices.empty:
-                return f"Error: No trading data found for {symbol} between {start_date} and {end_date}"
-            prices.index = prices.index.astype(str)
-            return f"{prices['Close'].to_json(orient='index')}"
-        except Exception as e:
-            return f"Error: {e!s}"
+                return error_result(
+                    "NO_DATA",
+                    f"No trading data found for {symbol} between {start_date} and {end_date}",
+                )
+            return {
+                "symbol": symbol,
+                "startDate": start_date,
+                "endDate": end_date,
+                "prices": _records(prices[["Close"]]),
+            }
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
     def get_historical_stock_prices(
         self,
@@ -87,245 +154,225 @@ class YahooFinance:
             "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
         ] = "1mo",
         interval: Literal["1d", "5d", "1wk", "1mo", "3mo"] = "1d",
-    ) -> str:
+    ) -> ToolResult:
         """Get historical stock prices for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
-            period (str): The period for historical data. Defaults to "1mo".
-                    Valid periods: "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
-            interval (str): The interval beween data points. Defaults to "1d".
-                    Valid intervals: "1d", "5d", "1wk", "1mo", "3mo"
+            period (str): The period for historical data.
+            interval (str): The interval between data points.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            prices = stock.history(period=period, interval=interval)
+            symbol = validate_symbol(symbol)
+            prices = Ticker(ticker=symbol, session=self.session).history(
+                period=period, interval=interval
+            )
             if prices.empty:
-                return f"Error: No historical data found for {symbol}"
+                return error_result("NO_DATA", f"No historical data found for {symbol}")
+            return {
+                "symbol": symbol,
+                "period": period,
+                "interval": interval,
+                "prices": _records(prices),
+            }
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-            if hasattr(prices.index, "date"):
-                prices.index = prices.index.date.astype(str)  # type: ignore
-            return f"{prices['Close'].to_json(orient='index')}"
-        except Exception as e:
-            return f"Error: {e!s}"
-
-    def get_dividends(self, symbol: str) -> str:
+    def get_dividends(self, symbol: str) -> ToolResult:
         """Get dividends for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            dividends = stock.dividends
-
+            symbol = validate_symbol(symbol)
+            dividends = Ticker(ticker=symbol, session=self.session).dividends
             if dividends.empty:
-                return f"Error: No dividend data found for {symbol}"
+                return error_result("NO_DATA", f"No dividend data found for {symbol}")
+            records = [
+                {"date": to_json_compatible(index), "amount": to_json_compatible(value)}
+                for index, value in dividends.items()
+            ]
+            return {"symbol": symbol, "dividends": records}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-            if hasattr(dividends.index, "date"):
-                dividends.index = dividends.index.date.astype(str)  # type: ignore
-            return f"{dividends.to_json(orient='index')}"
-        except Exception as e:
-            return f"Error: {e!s}"
+    def _get_statement(self, symbol: str, freq: str, kind: str) -> ToolResult:
+        symbol = validate_symbol(symbol)
+        stock = Ticker(ticker=symbol, session=self.session)
+        statement = (
+            stock.get_income_stmt(freq=freq, pretty=True)
+            if kind == "incomeStatement"
+            else stock.get_cashflow(freq=freq, pretty=True)
+        )
+        if not isinstance(statement, pd.DataFrame) or statement.empty:
+            return error_result("NO_DATA", f"No {kind} data found for {symbol}")
+        return {"symbol": symbol, "frequency": freq, kind: _records(statement)}
 
     def get_income_statement(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
-    ) -> str:
-        """Get income statement for a given stock symbol.
+    ) -> ToolResult:
+        """Get the income statement for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
-            freq (str): At what frequency to get cashflow statements. Defaults to "yearly".
-                    Valid freqencies: "yearly", "quarterly", "trainling"
+            freq (str): Statement frequency. Defaults to "yearly".
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            income_statement = stock.get_income_stmt(freq=freq, pretty=True)
-
-            if isinstance(income_statement, pd.DataFrame):
-                income_statement.columns = [
-                    str(col.date()) for col in income_statement.columns
-                ]
-                return f"{income_statement.to_json()}"
-            return f"{income_statement}"
-        except Exception as e:
-            return f"Error: {e!s}"
+            return self._get_statement(symbol, freq, "incomeStatement")
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
     def get_cashflow(
         self, symbol: str, freq: Literal["yearly", "quarterly", "trailing"] = "yearly"
-    ) -> str:
-        """Get cashflow for a given stock symbol.
+    ) -> ToolResult:
+        """Get the cashflow statement for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
-            freq (str): At what frequency to get cashflow statements. Defaults to "yearly".
-                    Valid freqencies: "yearly", "quarterly", "trainling"
+            freq (str): Statement frequency. Defaults to "yearly".
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            cashflow = stock.get_cashflow(freq=freq, pretty=True)
+            return self._get_statement(symbol, freq, "cashflow")
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-            if isinstance(cashflow, pd.DataFrame):
-                cashflow.columns = [str(col.date()) for col in cashflow.columns]
-                return f"{cashflow.to_json(indent=2)}"
-            return f"{cashflow}"
-        except Exception as e:
-            return f"Error: {e!s}"
-
-    def get_earning_dates(self, symbol: str, limit: int = 12) -> str:
-        """Get earning dates.
-
+    def get_earning_dates(self, symbol: str, limit: int = 12) -> ToolResult:
+        """Get recent and upcoming earnings dates.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
-            limit (int): max amount of upcoming and recent earnings dates to return. Default value 12 should return next 4 quarters and last 8 quarters. Increase if more history is needed.
+            limit (int): Maximum number of earnings dates, from 1 to 100.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            if limit < 1 or limit > 100:
-                return "Error: limit must be between 1 and 100"
-            stock = Ticker(ticker=symbol, session=self.session)
-            earning_dates = stock.get_earnings_dates(limit=limit)
+            symbol = validate_symbol(symbol)
+            if not 1 <= limit <= 100:
+                return error_result(
+                    "INVALID_ARGUMENT", "limit must be between 1 and 100"
+                )
+            earnings = Ticker(ticker=symbol, session=self.session).get_earnings_dates(
+                limit=limit
+            )
+            if not isinstance(earnings, pd.DataFrame) or earnings.empty:
+                return error_result("NO_DATA", f"No earnings data found for {symbol}")
+            return {"symbol": symbol, "limit": limit, "earnings": _records(earnings)}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-            if isinstance(earning_dates, pd.DataFrame):
-                earning_dates.index = earning_dates.index.date.astype(str)  # type: ignore
-                return f"{earning_dates.to_json(indent=2)}"
-            return f"{earning_dates}"
-        except Exception as e:
-            return f"Error: {e!s}"
-
-    def get_news(self, symbol: str) -> str:
+    def get_news(self, symbol: str) -> ToolResult:
         """Get news for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            if not stock.news:
-                return f"Error: No news found for {symbol}"
-            return json.dumps(stock.news, indent=2)
-        except Exception as e:
-            return f"Error: {e!s}"
+            symbol = validate_symbol(symbol)
+            news = Ticker(ticker=symbol, session=self.session).news
+            if not news:
+                return error_result("NO_DATA", f"No news found for {symbol}")
+            return {"symbol": symbol, "news": to_json_compatible(news)}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-    def get_recommendations(self, symbol: str) -> str:
+    def get_recommendations(self, symbol: str) -> ToolResult:
         """Get analyst recommendations for a given symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            recommendations = stock.get_recommendations()
-            if isinstance(recommendations, pd.DataFrame):
-                return f"{recommendations.to_json(orient='records', indent=2)}"
-            return f"{recommendations}"
-        except Exception as e:
-            return f"Error: {e!s}"
+            symbol = validate_symbol(symbol)
+            recommendations = Ticker(
+                ticker=symbol, session=self.session
+            ).get_recommendations()
+            if not isinstance(recommendations, pd.DataFrame) or recommendations.empty:
+                return error_result("NO_DATA", f"No recommendations found for {symbol}")
+            return {"symbol": symbol, "recommendations": _records(recommendations)}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-    def get_option_expiration_dates(self, symbol: str) -> str:
-        """Get available options expiration dates for a given stock symbol.
+    def get_option_expiration_dates(self, symbol: str) -> ToolResult:
+        """Get available option expiration dates for a stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            expiration_dates = stock.options
-            if not expiration_dates:
-                return f"Error: No options data found for {symbol}"
-            return json.dumps(list(expiration_dates), indent=2)
-        except Exception as e:
-            return f"Error: {e!s}"
+            symbol = validate_symbol(symbol)
+            dates = Ticker(ticker=symbol, session=self.session).options
+            if not dates:
+                return error_result("NO_DATA", f"No options data found for {symbol}")
+            return {"symbol": symbol, "expirationDates": list(dates)}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
-    def get_option_chain(self, symbol: str, expiration_date: str) -> str:
-        """Get options chain for a specific expiration date.
+    def get_option_chain(self, symbol: str, expiration_date: str) -> ToolResult:
+        """Get an option chain for a specific expiration date.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
-            expiration_date (str): Options expiration date in YYYY-MM-DD format.
+            expiration_date (str): Expiration date in YYYY-MM-DD format.
         """
         try:
-            symbol = validate_symbol(symbol=symbol)
-            validate_date(date_str=expiration_date, param_name="expiration_date")
-            stock = Ticker(ticker=symbol, session=self.session)
-            option_chain = stock.option_chain(expiration_date)
-
-            def _convert_dates(df: pd.DataFrame) -> pd.DataFrame:
-                if df is None or "lastTradeDate" not in df.columns:
-                    return df
-                df = df.copy()
-                df["lastTradeDate"] = df["lastTradeDate"].astype(str)
-                return df
-
-            result = {
-                "calls": None,
-                "puts": None,
-                "underlying": option_chain.underlying,
+            symbol = validate_symbol(symbol)
+            validate_date(expiration_date, "expiration_date")
+            chain = Ticker(ticker=symbol, session=self.session).option_chain(
+                expiration_date
+            )
+            return {
+                "symbol": symbol,
+                "expirationDate": expiration_date,
+                "underlying": to_json_compatible(chain.underlying),
+                "calls": _records(chain.calls) if chain.calls is not None else [],
+                "puts": _records(chain.puts) if chain.puts is not None else [],
             }
-
-            if option_chain.calls is not None:
-                result["calls"] = _convert_dates(option_chain.calls).to_dict(
-                    orient="records"
-                )
-
-            if option_chain.puts is not None:
-                result["puts"] = _convert_dates(option_chain.puts).to_dict(
-                    orient="records"
-                )
-
-            return json.dumps(result, indent=2)
-        except Exception as e:
-            return f"Error: {e!s}"
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
 
 
-TOOL_REGISTRY: dict[str, callable] = {}
+TOOL_REGISTRY: dict[str, Any] = {}
 
 
 def register_tools(yf: YahooFinance) -> None:
-    TOOL_REGISTRY.update(
-        {
-            "get_current_stock_price": yf.get_current_stock_price,
-            "get_stock_price_by_date": yf.get_stock_price_by_date,
-            "get_stock_price_date_range": yf.get_stock_price_date_range,
-            "get_historical_stock_prices": yf.get_historical_stock_prices,
-            "get_dividends": yf.get_dividends,
-            "get_income_statement": yf.get_income_statement,
-            "get_cashflow": yf.get_cashflow,
-            "get_earning_dates": yf.get_earning_dates,
-            "get_news": yf.get_news,
-            "get_recommendations": yf.get_recommendations,
-            "get_option_expiration_dates": yf.get_option_expiration_dates,
-            "get_option_chain": yf.get_option_chain,
-        }
+    TOOL_REGISTRY.clear()
+    names = (
+        "get_current_stock_price",
+        "get_stock_price_by_date",
+        "get_stock_price_date_range",
+        "get_historical_stock_prices",
+        "get_dividends",
+        "get_income_statement",
+        "get_cashflow",
+        "get_earning_dates",
+        "get_news",
+        "get_recommendations",
+        "get_option_expiration_dates",
+        "get_option_chain",
     )
+    TOOL_REGISTRY.update({name: getattr(yf, name) for name in names})
 
 
 async def serve() -> None:
-    server = Server("mcp-yahoo-finance")
-    yf = YahooFinance()
-    register_tools(yf)
-
+    register_tools(YahooFinance())
     tools = [generate_tool(method) for method in TOOL_REGISTRY.values()]
 
-    @server.list_tools()
-    async def list_tools() -> list[Tool]:
-        return tools
+    async def list_tools(_context: Any, _params: Any) -> ListToolsResult:
+        return ListToolsResult(tools=tools)
 
-    @server.call_tool()
-    async def call_tool(name: str, args: dict[str, Any]) -> list[TextContent]:
-        if name not in TOOL_REGISTRY:
-            raise ValueError(f"Unknown tool: {name}")
-        result = TOOL_REGISTRY[name](**args)
-        return [TextContent(type="text", text=result)]
+    async def call_tool(_context: Any, params: CallToolRequestParams) -> CallToolResult:
+        if params.name not in TOOL_REGISTRY:
+            return tool_result_to_mcp(
+                error_result("UNKNOWN_TOOL", f"Unknown tool: {params.name}")
+            )
+        return tool_result_to_mcp(
+            TOOL_REGISTRY[params.name](**(params.arguments or {}))
+        )
 
+    server = Server(
+        "mcp-yahoo-finance",
+        on_list_tools=list_tools,
+        on_call_tool=call_tool,
+    )
     options = server.create_initialization_options()
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, options, raise_exceptions=True)

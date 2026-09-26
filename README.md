@@ -86,6 +86,36 @@ Add this to your `.vscode/mcp.json`:
 5. "Show me the options chain for AAPL expiring on 2024-01-19"
 6. "What are the call and put options for Tesla?"
 
+## Response format
+
+Tool calls return JSON-compatible structured data. For example, a current price
+looks like this:
+
+```json
+{
+  "symbol": "AAPL",
+  "price": 243.5822,
+  "currency": "USD",
+  "exchange": "NMS",
+  "source": "Yahoo Finance",
+  "timestamp": "2025-01-02T15:30:00+00:00"
+}
+```
+
+Errors use the same shape for every tool and are marked as MCP errors:
+
+```json
+{
+  "error": {
+    "code": "NO_DATA",
+    "message": "No historical data found for AAPL"
+  }
+}
+```
+
+Historical and tabular results keep their column names and include dates as
+JSON strings. Missing numeric values are represented as `null`.
+
 ## Build
 
 Docker:
