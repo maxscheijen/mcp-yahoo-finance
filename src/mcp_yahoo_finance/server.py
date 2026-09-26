@@ -1,5 +1,6 @@
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Literal
 
 import pandas as pd
@@ -266,18 +267,166 @@ class YahooFinance:
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
 
-    def get_news(self, symbol: str) -> ToolResult:
-        """Get news for a given stock symbol.
+    @staticmethod
+    def _news_timestamp(value: Any) -> datetime | None:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            try:
+                return datetime.fromtimestamp(value, timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if not isinstance(value, str) or not value.strip():
+            return None
+        try:
+            timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            try:
+                timestamp = parsedate_to_datetime(value)
+            except (TypeError, ValueError, OverflowError):
+                return None
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=timezone.utc)
+        return timestamp.astimezone(timezone.utc)
+
+    @staticmethod
+    def _news_value(article: dict[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = article.get(key)
+            if value is not None:
+                return value
+        return None
+
+    @classmethod
+    def _normalize_news_article(cls, article: Any) -> dict[str, Any] | None:
+        if not isinstance(article, dict):
+            return None
+
+        content = article.get("content")
+        if not isinstance(content, dict):
+            content = article
+
+        title = cls._news_value(content, "title") or cls._news_value(article, "title")
+        url_value = cls._news_value(content, "canonicalUrl", "clickThroughUrl", "link")
+        if isinstance(url_value, dict):
+            url_value = url_value.get("url")
+        url = url_value or cls._news_value(article, "link", "url")
+        if (
+            not isinstance(title, str)
+            or not title.strip()
+            or not isinstance(url, str)
+            or not url.strip()
+        ):
+            return None
+
+        provider = cls._news_value(content, "provider", "publisher")
+        if isinstance(provider, dict):
+            provider = provider.get("displayName") or provider.get("name")
+        publisher = (
+            provider
+            if isinstance(provider, str)
+            else cls._news_value(article, "publisher")
+        )
+
+        timestamp_value = cls._news_value(
+            content, "pubDate", "providerPublishTime", "displayTime", "publishedAt"
+        )
+        if timestamp_value is None:
+            timestamp_value = cls._news_value(
+                article, "providerPublishTime", "pubDate", "publishedAt"
+            )
+        published_at = cls._news_timestamp(timestamp_value)
+        if published_at is None:
+            return None
+
+        thumbnail = cls._news_value(content, "thumbnail")
+        if isinstance(thumbnail, dict):
+            thumbnail = thumbnail.get("originalUrl") or thumbnail.get("url")
+            if thumbnail is None:
+                resolutions = content.get("thumbnail", {}).get("resolutions", [])
+                if resolutions and isinstance(resolutions[0], dict):
+                    thumbnail = resolutions[0].get("url")
+        if not isinstance(thumbnail, str):
+            thumbnail = None
+
+        related = cls._news_value(content, "relatedTickers", "relatedSymbols")
+        if related is None and isinstance(content.get("finance"), dict):
+            related = content["finance"].get("tickerSymbols")
+        if related is None:
+            related = cls._news_value(article, "relatedTickers", "relatedSymbols")
+        if not isinstance(related, list):
+            related = []
+        related_symbols = sorted(
+            {
+                item.upper().strip()
+                for item in related
+                if isinstance(item, str) and item.strip()
+            }
+        )
+
+        return {
+            "title": title.strip(),
+            "url": url.strip(),
+            "publisher": publisher.strip() if isinstance(publisher, str) else None,
+            "publishedAt": published_at.isoformat().replace("+00:00", "Z"),
+            "thumbnail": thumbnail,
+            "relatedSymbols": related_symbols,
+        }
+
+    def get_news(
+        self,
+        symbol: str,
+        limit: int = 10,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> ToolResult:
+        """Get normalized, bounded news for a stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
+            limit (int): Maximum number of articles, from 1 to 100.
+            start_date (str): Include articles published on or after this YYYY-MM-DD date.
+            end_date (str): Include articles published on or before this YYYY-MM-DD date.
         """
         try:
             symbol = validate_symbol(symbol)
-            news = Ticker(ticker=symbol, session=self.session).news
+            if not 1 <= limit <= 100:
+                return error_result(
+                    "INVALID_ARGUMENT", "limit must be between 1 and 100"
+                )
+            if start_date is not None:
+                validate_date(start_date, "start_date")
+            if end_date is not None:
+                validate_date(end_date, "end_date")
+            if start_date and end_date and start_date > end_date:
+                return error_result(
+                    "INVALID_ARGUMENT", "start_date must be on or before end_date"
+                )
+
+            # ``Ticker.news`` calls ``get_news()`` with yfinance's default count
+            # of 10. Fetch a larger bounded window so date filters can inspect
+            # more than just the newest ten articles.
+            news = Ticker(ticker=symbol, session=self.session).get_news(count=100)
             if not news:
                 return error_result("NO_DATA", f"No news found for {symbol}")
-            return {"symbol": symbol, "news": to_json_compatible(news)}
+
+            start = date.fromisoformat(start_date) if start_date else None
+            end = date.fromisoformat(end_date) if end_date else None
+            articles = []
+            for article in news:
+                normalized = self._normalize_news_article(article)
+                if normalized is None:
+                    continue
+                published_date = date.fromisoformat(normalized["publishedAt"][:10])
+                if start and published_date < start:
+                    continue
+                if end and published_date > end:
+                    continue
+                articles.append(normalized)
+                if len(articles) == limit:
+                    break
+
+            if not articles:
+                return error_result("NO_DATA", f"No news found for {symbol}")
+            return {"symbol": symbol, "limit": limit, "news": articles}
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
 
