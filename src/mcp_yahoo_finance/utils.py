@@ -1,6 +1,7 @@
 import inspect
+import types
 from datetime import datetime
-from typing import Any, Union, get_origin
+from typing import Any, Literal, Union, get_args, get_origin
 
 from mcp.types import Tool
 
@@ -29,28 +30,52 @@ def parse_docstring(docstring: str) -> dict[str, str]:
     return descriptions
 
 
-def _infer_json_type(annotation: Any) -> str:
-    """Infer JSON schema type from Python type annotation."""
-    if annotation is None or annotation is inspect.Parameter.empty:
+def _json_type_for_value(value: Any) -> str | None:
+    """Return the JSON Schema type for a literal value."""
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "number"
+    if isinstance(value, str):
         return "string"
+    return None
+
+
+def _infer_json_schema(annotation: Any) -> dict[str, Any]:
+    """Infer a JSON Schema fragment from a Python type annotation."""
+    if annotation is None or annotation is inspect.Parameter.empty:
+        return {"type": "string"}
 
     origin = get_origin(annotation)
 
-    if origin is Union:
-        args = annotation.__args__
-        for arg in args:
-            if arg is type(None):
-                continue
-            return _infer_json_type(arg)
+    if origin is Literal:
+        values = list(get_args(annotation))
+        schema: dict[str, Any] = {"enum": values}
+        value_types = {_json_type_for_value(value) for value in values}
+        value_types.discard(None)
+        if len(value_types) == 1:
+            schema["type"] = value_types.pop()
+        return schema
 
-    if annotation in (int, float):
-        return "number"
+    if origin in (Union, types.UnionType):
+        args = [arg for arg in get_args(annotation) if arg is not type(None)]
+        schemas = [_infer_json_schema(arg) for arg in args]
+        if len(schemas) == 1:
+            return schemas[0]
+        return {"anyOf": schemas}
+
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
     if annotation is bool:
-        return "boolean"
+        return {"type": "boolean"}
     if annotation is str:
-        return "string"
+        return {"type": "string"}
 
-    return "string"
+    return {"type": "string"}
 
 
 def generate_tool(func: Any) -> Tool:
@@ -69,17 +94,15 @@ def generate_tool(func: Any) -> Tool:
     }
 
     for param_name, param in signature.parameters.items():
-        param_type = _infer_json_type(param.annotation)
-        schema["inputSchema"]["properties"][param_name] = {
-            "type": param_type,
-            "description": param_descriptions.get(param_name, ""),
-        }
+        property_schema = _infer_json_schema(param.annotation)
+        property_schema["description"] = param_descriptions.get(param_name, "")
+        if param.default is not inspect.Parameter.empty:
+            property_schema["default"] = param.default
 
-        if "required" not in schema["inputSchema"]:
-            schema["inputSchema"]["required"] = [param_name]
-        else:
-            if "=" not in str(param):
-                schema["inputSchema"]["required"].append(param_name)
+        schema["inputSchema"]["properties"][param_name] = property_schema
+
+        if param.default is inspect.Parameter.empty:
+            schema["inputSchema"].setdefault("required", []).append(param_name)
 
     return Tool(**schema)
 
