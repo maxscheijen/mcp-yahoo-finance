@@ -40,6 +40,12 @@ def _records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return dataframe_to_records(dataframe)
 
 
+def _next_date(date_string: str) -> str:
+    return (datetime.strptime(date_string, "%Y-%m-%d") + timedelta(days=1)).strftime(
+        "%Y-%m-%d"
+    )
+
+
 def tool_result_to_mcp(result: ToolResult) -> CallToolResult:
     """Convert a tool result into MCP structured and readable content."""
     is_error = "error" in result
@@ -95,7 +101,7 @@ class YahooFinance:
             symbol = validate_symbol(symbol)
             validate_date(date, "date")
             prices = Ticker(ticker=symbol, session=self.session).history(
-                start=date, period="1d"
+                start=date, end=_next_date(date), auto_adjust=True
             )
             if prices.empty:
                 return error_result(
@@ -127,11 +133,8 @@ class YahooFinance:
                 return error_result(
                     "INVALID_ARGUMENT", "start_date must be on or before end_date"
                 )
-            end = (
-                datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
-            ).strftime("%Y-%m-%d")
             prices = Ticker(ticker=symbol, session=self.session).history(
-                start=start_date, end=end
+                start=start_date, end=_next_date(end_date), auto_adjust=True
             )
             if prices.empty:
                 return error_result(
@@ -142,6 +145,7 @@ class YahooFinance:
                 "symbol": symbol,
                 "startDate": start_date,
                 "endDate": end_date,
+                "adjusted": True,
                 "prices": _records(prices[["Close"]]),
             }
         except Exception as exc:
@@ -154,6 +158,7 @@ class YahooFinance:
             "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"
         ] = "1mo",
         interval: Literal["1d", "5d", "1wk", "1mo", "3mo"] = "1d",
+        adjusted: bool = True,
     ) -> ToolResult:
         """Get historical stock prices for a given stock symbol.
 
@@ -161,11 +166,12 @@ class YahooFinance:
             symbol (str): Stock symbol in Yahoo Finance format.
             period (str): The period for historical data.
             interval (str): The interval between data points.
+            adjusted (bool): Return split- and dividend-adjusted prices. Defaults to True.
         """
         try:
             symbol = validate_symbol(symbol)
             prices = Ticker(ticker=symbol, session=self.session).history(
-                period=period, interval=interval
+                period=period, interval=interval, auto_adjust=adjusted
             )
             if prices.empty:
                 return error_result("NO_DATA", f"No historical data found for {symbol}")
@@ -173,6 +179,7 @@ class YahooFinance:
                 "symbol": symbol,
                 "period": period,
                 "interval": interval,
+                "adjusted": adjusted,
                 "prices": _records(prices),
             }
         except Exception as exc:

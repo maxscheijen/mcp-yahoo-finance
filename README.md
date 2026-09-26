@@ -114,7 +114,14 @@ Errors use the same shape for every tool and are marked as MCP errors:
 ```
 
 Historical and tabular results keep their column names and include dates as
-JSON strings. Missing numeric values are represented as `null`.
+`YYYY-MM-DD` calendar-date strings. This is true for both naive and
+timezone-aware Yahoo Finance indexes; the provider timezone is not exposed.
+Historical, single-date, and date-range price tools return adjusted prices by
+default (split and dividend adjustments). `get_historical_stock_prices` accepts
+`adjusted: false` when unadjusted OHLC values are required. A single-date
+lookup and a date range use inclusive calendar dates; weekends and market
+holidays return a structured `NO_DATA` error when no trading row exists.
+Missing numeric values are represented as `null`.
 
 ## Build
 
