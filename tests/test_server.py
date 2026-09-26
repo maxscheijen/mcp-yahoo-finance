@@ -16,6 +16,10 @@ def client_tools() -> list[Tool]:
         generate_tool(yf.get_stock_price_date_range),
         generate_tool(yf.get_historical_stock_prices),
         generate_tool(yf.get_dividends),
+        generate_tool(yf.get_stock_splits),
+        generate_tool(yf.get_capital_gains),
+        generate_tool(yf.get_upcoming_dividends),
+        generate_tool(yf.get_earnings_analytics),
         generate_tool(yf.get_income_statement),
         generate_tool(yf.get_cashflow),
         generate_tool(yf.get_earning_dates),
@@ -35,6 +39,10 @@ def client_tools() -> list[Tool]:
         "get_stock_price_date_range",
         "get_historical_stock_prices",
         "get_dividends",
+        "get_stock_splits",
+        "get_capital_gains",
+        "get_upcoming_dividends",
+        "get_earnings_analytics",
         "get_income_statement",
         "get_cashflow",
         "get_earning_dates",
@@ -146,6 +154,88 @@ def test_empty_result_has_consistent_error_shape():
             "message": "No historical data found for AAPL",
         }
     }
+
+
+def test_corporate_actions_normalize_series_dates_and_values():
+    import pandas as pd
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker = MagicMock()
+        index = pd.DatetimeIndex(["2025-01-02"])
+        mock_ticker.get_splits.return_value = pd.Series([2.0], index=index)
+        mock_ticker.get_capital_gains.return_value = pd.Series([0.5], index=index)
+        mock_ticker_class.return_value = mock_ticker
+
+        yf = YahooFinance()
+        assert yf.get_stock_splits("aapl") == {
+            "symbol": "AAPL",
+            "splits": [{"date": "2025-01-02", "ratio": 2.0}],
+        }
+        assert yf.get_capital_gains("aapl") == {
+            "symbol": "AAPL",
+            "capitalGains": [{"date": "2025-01-02", "amount": 0.5}],
+        }
+
+
+def test_upcoming_dividend_normalizes_calendar_fields():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.get_calendar.return_value = {
+            "Ex-Dividend Date": "2025-02-14T00:00:00",
+            "Dividend Date": "2025-03-01T00:00:00",
+            "Dividend Rate": 1.2,
+            "Dividend Yield": 0.02,
+        }
+
+        assert YahooFinance().get_upcoming_dividends("aapl") == {
+            "symbol": "AAPL",
+            "upcomingDividend": {
+                "exDividendDate": "2025-02-14",
+                "dividendDate": "2025-03-01",
+                "dividendRate": 1.2,
+                "dividendYield": 0.02,
+            },
+        }
+
+
+def test_earnings_analytics_keeps_partial_histories():
+    import pandas as pd
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker = MagicMock()
+        mock_ticker.get_earnings_history.return_value = pd.DataFrame(
+            {"epsActual": [1.1], "epsEstimate": [1.0], "surprisePercent": [10.0]},
+            index=pd.DatetimeIndex(["2025-01-01"]),
+        )
+        mock_ticker.get_earnings_estimate.return_value = pd.DataFrame()
+        mock_ticker_class.return_value = mock_ticker
+
+        result = YahooFinance().get_earnings_analytics("aapl")
+
+    assert result["symbol"] == "AAPL"
+    assert result["earningsHistory"][0]["date"] == "2025-01-01"
+    assert "earningsEstimates" not in result
+
+
+@pytest.mark.parametrize(
+    "method, message",
+    [
+        ("get_stock_splits", "No stock split data found for AAPL"),
+        ("get_capital_gains", "No capital gains data found for AAPL"),
+    ],
+)
+def test_corporate_actions_empty_history_is_no_data(method, message):
+    import pandas as pd
+
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker = MagicMock()
+        if method == "get_stock_splits":
+            mock_ticker.get_splits.return_value = pd.Series(dtype=float)
+        else:
+            mock_ticker.get_capital_gains.return_value = pd.Series(dtype=float)
+        mock_ticker_class.return_value = mock_ticker
+        result = getattr(YahooFinance(), method)("AAPL")
+
+    assert result == {"error": {"code": "NO_DATA", "message": message}}
 
 
 def test_tool_result_to_mcp_marks_structured_errors():

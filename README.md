@@ -139,6 +139,10 @@ symbols, such as `AAPL` or `MSFT`.
 | `get_stock_price_date_range` | Adjusted closing prices for an inclusive date range |
 | `get_historical_stock_prices` | Historical prices by period and interval |
 | `get_dividends` | Dividend history |
+| `get_stock_splits` | Stock split history |
+| `get_capital_gains` | Capital-gains distributions |
+| `get_upcoming_dividends` | Upcoming dividend dates and rates |
+| `get_earnings_analytics` | Earnings surprises and estimates |
 | `get_income_statement` | Income statement by yearly, quarterly, or trailing frequency |
 | `get_cashflow` | Cash-flow statement by frequency |
 | `get_earning_dates` | Recent and upcoming earnings dates |

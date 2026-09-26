@@ -41,6 +41,17 @@ def _records(dataframe: pd.DataFrame) -> list[dict[str, Any]]:
     return dataframe_to_records(dataframe)
 
 
+def _series_records(series: Any, value_name: str) -> list[dict[str, Any]]:
+    """Serialize an event series with a normalized calendar-date field."""
+    return [
+        {
+            "date": to_json_compatible(index)[:10],
+            value_name: to_json_compatible(value),
+        }
+        for index, value in series.items()
+    ]
+
+
 def _next_date(date_string: str) -> str:
     return (datetime.strptime(date_string, "%Y-%m-%d") + timedelta(days=1)).strftime(
         "%Y-%m-%d"
@@ -187,21 +198,138 @@ class YahooFinance:
             return error_result(_error_code(exc), str(exc))
 
     def get_dividends(self, symbol: str) -> ToolResult:
-        """Get dividends for a given stock symbol.
+        """Get normalized dividend history for a given stock symbol.
 
         Args:
             symbol (str): Stock symbol in Yahoo Finance format.
         """
         try:
             symbol = validate_symbol(symbol)
-            dividends = Ticker(ticker=symbol, session=self.session).dividends
+            stock = Ticker(ticker=symbol, session=self.session)
+            dividends = stock.get_dividends()
             if dividends.empty:
                 return error_result("NO_DATA", f"No dividend data found for {symbol}")
-            records = [
-                {"date": to_json_compatible(index), "amount": to_json_compatible(value)}
-                for index, value in dividends.items()
-            ]
-            return {"symbol": symbol, "dividends": records}
+            result: ToolResult = {
+                "symbol": symbol,
+                "dividends": _series_records(dividends, "amount"),
+            }
+            # These fields are optional in Yahoo's quoteSummary response. They
+            # provide yield context without making the history dependent on it.
+            try:
+                info = stock.info
+            except Exception:
+                info = {}
+            yield_context = {
+                key: to_json_compatible(info[key])
+                for key in (
+                    "dividendYield",
+                    "trailingAnnualDividendYield",
+                    "trailingAnnualDividendRate",
+                )
+                if isinstance(info.get(key), (int, float))
+                and not isinstance(info.get(key), bool)
+            }
+            if yield_context:
+                result["yieldContext"] = yield_context
+            return result
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    def get_stock_splits(self, symbol: str) -> ToolResult:
+        """Get normalized stock split history for a symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            splits = Ticker(ticker=symbol, session=self.session).get_splits()
+            if splits.empty:
+                return error_result(
+                    "NO_DATA", f"No stock split data found for {symbol}"
+                )
+            return {"symbol": symbol, "splits": _series_records(splits, "ratio")}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    def get_capital_gains(self, symbol: str) -> ToolResult:
+        """Get normalized capital-gains distributions for a symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            gains = Ticker(ticker=symbol, session=self.session).get_capital_gains()
+            if gains.empty:
+                return error_result(
+                    "NO_DATA", f"No capital gains data found for {symbol}"
+                )
+            return {"symbol": symbol, "capitalGains": _series_records(gains, "amount")}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    def get_upcoming_dividends(self, symbol: str) -> ToolResult:
+        """Get upcoming dividend dates and rates when Yahoo provides them.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            calendar = Ticker(ticker=symbol, session=self.session).get_calendar()
+            if not isinstance(calendar, dict):
+                return error_result(
+                    "NO_DATA", f"No upcoming dividend data found for {symbol}"
+                )
+            fields = {
+                "exDividendDate": calendar.get("Ex-Dividend Date"),
+                "dividendDate": calendar.get("Dividend Date"),
+                "dividendRate": calendar.get("Dividend Rate"),
+                "dividendYield": calendar.get("Dividend Yield"),
+            }
+            result = {
+                key: to_json_compatible(value)
+                for key, value in fields.items()
+                if value is not None
+            }
+            if not result:
+                return error_result(
+                    "NO_DATA", f"No upcoming dividend data found for {symbol}"
+                )
+            for key in ("exDividendDate", "dividendDate"):
+                if key in result:
+                    result[key] = result[key][:10]
+            return {"symbol": symbol, "upcomingDividend": result}
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    def get_earnings_analytics(self, symbol: str, limit: int = 12) -> ToolResult:
+        """Get earnings surprise history and analyst estimate history.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+            limit (int): Maximum rows returned for each history, from 1 to 100.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            if not 1 <= limit <= 100:
+                return error_result(
+                    "INVALID_ARGUMENT", "limit must be between 1 and 100"
+                )
+            stock = Ticker(ticker=symbol, session=self.session)
+            history = stock.get_earnings_history()
+            estimates = stock.get_earnings_estimate()
+            result: ToolResult = {"symbol": symbol, "limit": limit}
+            if isinstance(history, pd.DataFrame) and not history.empty:
+                result["earningsHistory"] = _records(history.head(limit))
+            if isinstance(estimates, pd.DataFrame) and not estimates.empty:
+                result["earningsEstimates"] = _records(estimates.head(limit))
+            if len(result) == 2:
+                return error_result(
+                    "NO_DATA", f"No earnings analytics found for {symbol}"
+                )
+            return result
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
 
@@ -497,6 +625,10 @@ def register_tools(yf: YahooFinance) -> None:
         "get_stock_price_date_range",
         "get_historical_stock_prices",
         "get_dividends",
+        "get_stock_splits",
+        "get_capital_gains",
+        "get_upcoming_dividends",
+        "get_earnings_analytics",
         "get_income_statement",
         "get_cashflow",
         "get_earning_dates",
