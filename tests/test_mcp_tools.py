@@ -6,7 +6,6 @@ import pytest
 from mcp.types import CallToolRequestParams, CallToolResult
 
 from mcp_yahoo_finance.server import (
-    TOOL_REGISTRY,
     YahooFinance,
     call_registered_tool,
     register_tools,
@@ -56,9 +55,9 @@ def _option_chain() -> SimpleNamespace:
 
 
 def test_register_tools_contains_every_public_mcp_tool() -> None:
-    register_tools(YahooFinance())
+    registry = register_tools(YahooFinance())
 
-    assert set(TOOL_REGISTRY) == {
+    assert set(registry) == {
         "get_current_stock_price",
         "get_symbol_comparison",
         "get_performance_analysis",
@@ -340,9 +339,9 @@ async def test_registered_tool_uses_registry_and_returns_mcp_result() -> None:
             "regularMarketPrice": 123.45,
             "currency": "USD",
         }
-        register_tools(YahooFinance())
+        registry = register_tools(YahooFinance())
         result = await call_registered_tool(
-            TOOL_REGISTRY,
+            registry,
             CallToolRequestParams(
                 name="get_current_stock_price", arguments={"symbol": "aapl"}
             ),
