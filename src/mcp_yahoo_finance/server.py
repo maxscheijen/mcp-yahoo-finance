@@ -1,6 +1,9 @@
 import asyncio
 import json
+import time
 from collections.abc import Callable, Mapping
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
@@ -29,6 +32,9 @@ ToolResult = dict[str, Any]
 Tool = Callable[..., ToolResult]
 
 TOOL_TIMEOUT_SECONDS = 30.0
+UPSTREAM_TIMEOUT_SECONDS = 10.0
+UPSTREAM_MAX_RETRIES = 2
+UPSTREAM_CACHE_TTL_SECONDS = 30.0
 
 
 def error_result(code: str, message: str) -> ToolResult:
@@ -74,11 +80,117 @@ def tool_result_to_mcp(result: ToolResult) -> CallToolResult:
     )
 
 
-class YahooFinance:
-    def __init__(self, session: Session | None = None, verify: bool = True) -> None:
+class YahooFinanceAdapter:
+    """Centralize yfinance access, retries, timeouts, and response caching."""
+
+    def __init__(
+        self,
+        session: Session | None = None,
+        verify: bool = True,
+        timeout: float = UPSTREAM_TIMEOUT_SECONDS,
+        max_retries: int = UPSTREAM_MAX_RETRIES,
+        cache_ttl: float = UPSTREAM_CACHE_TTL_SECONDS,
+        retry_backoff: float = 0.0,
+        ticker_factory: Callable[..., Any] | None = None,
+    ) -> None:
+        if timeout <= 0:
+            raise ValueError("timeout must be positive")
+        if max_retries < 0:
+            raise ValueError("max_retries must be non-negative")
+        if cache_ttl < 0:
+            raise ValueError("cache_ttl must be non-negative")
+        if retry_backoff < 0:
+            raise ValueError("retry_backoff must be non-negative")
+
         self.session = session
         if self.session:
             self.session.verify = verify
+        self.timeout = timeout
+        self.max_retries = max_retries
+        self.cache_ttl = cache_ttl
+        self.retry_backoff = retry_backoff
+        self._ticker_factory = ticker_factory or Ticker
+        self._tickers: dict[str, Any] = {}
+        self._cache: dict[str, tuple[float, Any]] = {}
+
+    def ticker(self, symbol: str) -> Any:
+        """Return one shared yfinance ticker for a normalized symbol."""
+        if symbol not in self._tickers:
+            self._tickers[symbol] = self._ticker_factory(
+                ticker=symbol, session=self.session
+            )
+        return self._tickers[symbol]
+
+    def request(
+        self,
+        symbol: str,
+        operation: Callable[[Any], Any],
+        *,
+        cache_key: str,
+    ) -> Any:
+        """Run one upstream operation with a bounded retry policy."""
+        key = f"{symbol}:{cache_key}"
+        now = time.monotonic()
+        cached = self._cache.get(key)
+        if cached and cached[0] > now:
+            return cached[1]
+        if cached:
+            self._cache.pop(key, None)
+
+        last_error: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            executor = ThreadPoolExecutor(max_workers=1)
+            future = executor.submit(operation, self.ticker(symbol))
+            try:
+                result = future.result(timeout=self.timeout)
+                executor.shutdown(wait=True)
+                if self.cache_ttl:
+                    self._cache[key] = (time.monotonic() + self.cache_ttl, result)
+                return result
+            except FutureTimeoutError as exc:
+                last_error = TimeoutError(
+                    f"Yahoo Finance request timed out after {self.timeout:g} seconds"
+                )
+                future.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
+                if attempt == self.max_retries:
+                    raise last_error from exc
+            except Exception as exc:
+                executor.shutdown(wait=True)
+                last_error = exc
+                if attempt == self.max_retries:
+                    raise
+            if self.retry_backoff:
+                time.sleep(self.retry_backoff * (2**attempt))
+
+        raise last_error or RuntimeError("Yahoo Finance request failed")
+
+
+class YahooFinance:
+    def __init__(
+        self,
+        session: Session | None = None,
+        verify: bool = True,
+        *,
+        timeout: float = UPSTREAM_TIMEOUT_SECONDS,
+        max_retries: int = UPSTREAM_MAX_RETRIES,
+        cache_ttl: float = UPSTREAM_CACHE_TTL_SECONDS,
+        retry_backoff: float = 0.0,
+        adapter: YahooFinanceAdapter | None = None,
+    ) -> None:
+        self.adapter = adapter or YahooFinanceAdapter(
+            session=session,
+            verify=verify,
+            timeout=timeout,
+            max_retries=max_retries,
+            cache_ttl=cache_ttl,
+            retry_backoff=retry_backoff,
+        )
+
+    def _request(
+        self, symbol: str, operation: Callable[[Any], Any], cache_key: str
+    ) -> Any:
+        return self.adapter.request(symbol, operation, cache_key=cache_key)
 
     def get_current_stock_price(self, symbol: str) -> ToolResult:
         """Get the current stock price based on stock symbol.
@@ -88,7 +200,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            info = Ticker(ticker=symbol, session=self.session).info
+            info = self._request(symbol, lambda stock: stock.info, "info")
             price = info.get("regularMarketPrice") or info.get("currentPrice")
             if price is None:
                 return error_result("NO_DATA", f"No current price found for {symbol}")
@@ -131,7 +243,7 @@ class YahooFinance:
             quotes, errors = [], []
             for symbol in normalized:
                 try:
-                    info = Ticker(ticker=symbol, session=self.session).info
+                    info = self._request(symbol, lambda stock: stock.info, "info")
                     price = info.get("regularMarketPrice") or info.get("currentPrice")
                     if price is None:
                         raise ValueError(f"No current price found for {symbol}")
@@ -216,8 +328,14 @@ class YahooFinance:
             errors = []
             for symbol in requested:
                 try:
-                    frame = Ticker(ticker=symbol, session=self.session).history(
-                        start=start_date, end=_next_date(end_date), auto_adjust=True
+                    frame = self._request(
+                        symbol,
+                        lambda stock: stock.history(
+                            start=start_date,
+                            end=_next_date(end_date),
+                            auto_adjust=True,
+                        ),
+                        f"history:{start_date}:{end_date}:adjusted",
                     )
                     if (
                         not isinstance(frame, pd.DataFrame)
@@ -293,8 +411,12 @@ class YahooFinance:
         try:
             symbol = validate_symbol(symbol)
             validate_date(date, "date")
-            prices = Ticker(ticker=symbol, session=self.session).history(
-                start=date, end=_next_date(date), auto_adjust=True
+            prices = self._request(
+                symbol,
+                lambda stock: stock.history(
+                    start=date, end=_next_date(date), auto_adjust=True
+                ),
+                f"history:{date}:{date}:adjusted",
             )
             if prices.empty:
                 return error_result(
@@ -326,8 +448,12 @@ class YahooFinance:
                 return error_result(
                     "INVALID_ARGUMENT", "start_date must be on or before end_date"
                 )
-            prices = Ticker(ticker=symbol, session=self.session).history(
-                start=start_date, end=_next_date(end_date), auto_adjust=True
+            prices = self._request(
+                symbol,
+                lambda stock: stock.history(
+                    start=start_date, end=_next_date(end_date), auto_adjust=True
+                ),
+                f"history:{start_date}:{end_date}:adjusted",
             )
             if prices.empty:
                 return error_result(
@@ -363,8 +489,12 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            prices = Ticker(ticker=symbol, session=self.session).history(
-                period=period, interval=interval, auto_adjust=adjusted
+            prices = self._request(
+                symbol,
+                lambda stock: stock.history(
+                    period=period, interval=interval, auto_adjust=adjusted
+                ),
+                f"history:{period}:{interval}:{adjusted}",
             )
             if prices.empty:
                 return error_result("NO_DATA", f"No historical data found for {symbol}")
@@ -386,8 +516,9 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            stock = Ticker(ticker=symbol, session=self.session)
-            dividends = stock.get_dividends()
+            dividends = self._request(
+                symbol, lambda stock: stock.get_dividends(), "dividends"
+            )
             if dividends.empty:
                 return error_result("NO_DATA", f"No dividend data found for {symbol}")
             result: ToolResult = {
@@ -397,7 +528,7 @@ class YahooFinance:
             # These fields are optional in Yahoo's quoteSummary response. They
             # provide yield context without making the history dependent on it.
             try:
-                info = stock.info
+                info = self._request(symbol, lambda stock: stock.info, "info")
             except Exception:
                 info = {}
             yield_context = {
@@ -424,7 +555,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            splits = Ticker(ticker=symbol, session=self.session).get_splits()
+            splits = self._request(symbol, lambda stock: stock.get_splits(), "splits")
             if splits.empty:
                 return error_result(
                     "NO_DATA", f"No stock split data found for {symbol}"
@@ -441,7 +572,9 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            gains = Ticker(ticker=symbol, session=self.session).get_capital_gains()
+            gains = self._request(
+                symbol, lambda stock: stock.get_capital_gains(), "capital-gains"
+            )
             if gains.empty:
                 return error_result(
                     "NO_DATA", f"No capital gains data found for {symbol}"
@@ -458,7 +591,9 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            calendar = Ticker(ticker=symbol, session=self.session).get_calendar()
+            calendar = self._request(
+                symbol, lambda stock: stock.get_calendar(), "calendar"
+            )
             if not isinstance(calendar, dict):
                 return error_result(
                     "NO_DATA", f"No upcoming dividend data found for {symbol}"
@@ -498,9 +633,12 @@ class YahooFinance:
                 return error_result(
                     "INVALID_ARGUMENT", "limit must be between 1 and 100"
                 )
-            stock = Ticker(ticker=symbol, session=self.session)
-            history = stock.get_earnings_history()
-            estimates = stock.get_earnings_estimate()
+            history = self._request(
+                symbol, lambda stock: stock.get_earnings_history(), "earnings-history"
+            )
+            estimates = self._request(
+                symbol, lambda stock: stock.get_earnings_estimate(), "earnings-estimate"
+            )
             result: ToolResult = {"symbol": symbol, "limit": limit}
             if isinstance(history, pd.DataFrame) and not history.empty:
                 result["earningsHistory"] = _records(history.head(limit))
@@ -516,11 +654,15 @@ class YahooFinance:
 
     def _get_statement(self, symbol: str, freq: str, kind: str) -> ToolResult:
         symbol = validate_symbol(symbol)
-        stock = Ticker(ticker=symbol, session=self.session)
-        statement = (
-            stock.get_income_stmt(freq=freq, pretty=True)
+        operation = (
+            (lambda stock: stock.get_income_stmt(freq=freq, pretty=True))
             if kind == "incomeStatement"
-            else stock.get_cashflow(freq=freq, pretty=True)
+            else (lambda stock: stock.get_cashflow(freq=freq, pretty=True))
+        )
+        statement = self._request(
+            symbol,
+            operation,
+            f"{kind}:{freq}",
         )
         if not isinstance(statement, pd.DataFrame) or statement.empty:
             return error_result("NO_DATA", f"No {kind} data found for {symbol}")
@@ -567,8 +709,10 @@ class YahooFinance:
                 return error_result(
                     "INVALID_ARGUMENT", "limit must be between 1 and 100"
                 )
-            earnings = Ticker(ticker=symbol, session=self.session).get_earnings_dates(
-                limit=limit
+            earnings = self._request(
+                symbol,
+                lambda stock: stock.get_earnings_dates(limit=limit),
+                f"earnings-dates:{limit}",
             )
             if not isinstance(earnings, pd.DataFrame) or earnings.empty:
                 return error_result("NO_DATA", f"No earnings data found for {symbol}")
@@ -713,7 +857,9 @@ class YahooFinance:
             # ``Ticker.news`` calls ``get_news()`` with yfinance's default count
             # of 10. Fetch a larger bounded window so date filters can inspect
             # more than just the newest ten articles.
-            news = Ticker(ticker=symbol, session=self.session).get_news(count=100)
+            news = self._request(
+                symbol, lambda stock: stock.get_news(count=100), "news:100"
+            )
             if not news:
                 return error_result("NO_DATA", f"No news found for {symbol}")
 
@@ -747,9 +893,9 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            recommendations = Ticker(
-                ticker=symbol, session=self.session
-            ).get_recommendations()
+            recommendations = self._request(
+                symbol, lambda stock: stock.get_recommendations(), "recommendations"
+            )
             if not isinstance(recommendations, pd.DataFrame) or recommendations.empty:
                 return error_result("NO_DATA", f"No recommendations found for {symbol}")
             return {"symbol": symbol, "recommendations": _records(recommendations)}
@@ -764,7 +910,7 @@ class YahooFinance:
         """
         try:
             symbol = validate_symbol(symbol)
-            dates = Ticker(ticker=symbol, session=self.session).options
+            dates = self._request(symbol, lambda stock: stock.options, "options")
             if not dates:
                 return error_result("NO_DATA", f"No options data found for {symbol}")
             return {"symbol": symbol, "expirationDates": list(dates)}
@@ -935,8 +1081,10 @@ class YahooFinance:
                 )
 
             source_timestamp = datetime.now(timezone.utc).isoformat()
-            chain = Ticker(ticker=symbol, session=self.session).option_chain(
-                expiration_date
+            chain = self._request(
+                symbol,
+                lambda stock: stock.option_chain(expiration_date),
+                f"option-chain:{expiration_date}",
             )
             underlying = to_json_compatible(chain.underlying)
             underlying_price = self._option_underlying_price(underlying)
@@ -1082,33 +1230,32 @@ class YahooFinance:
         return float(min(pain, key=pain.get))
 
 
-TOOL_REGISTRY: dict[str, Any] = {}
+TOOL_NAMES = (
+    "get_current_stock_price",
+    "get_symbol_comparison",
+    "get_performance_analysis",
+    "get_stock_price_by_date",
+    "get_stock_price_date_range",
+    "get_historical_stock_prices",
+    "get_dividends",
+    "get_stock_splits",
+    "get_capital_gains",
+    "get_upcoming_dividends",
+    "get_earnings_analytics",
+    "get_income_statement",
+    "get_cashflow",
+    "get_earning_dates",
+    "get_news",
+    "get_recommendations",
+    "get_option_expiration_dates",
+    "get_option_chain",
+    "get_option_summary",
+)
 
 
-def register_tools(yf: YahooFinance) -> None:
-    TOOL_REGISTRY.clear()
-    names = (
-        "get_current_stock_price",
-        "get_symbol_comparison",
-        "get_performance_analysis",
-        "get_stock_price_by_date",
-        "get_stock_price_date_range",
-        "get_historical_stock_prices",
-        "get_dividends",
-        "get_stock_splits",
-        "get_capital_gains",
-        "get_upcoming_dividends",
-        "get_earnings_analytics",
-        "get_income_statement",
-        "get_cashflow",
-        "get_earning_dates",
-        "get_news",
-        "get_recommendations",
-        "get_option_expiration_dates",
-        "get_option_chain",
-        "get_option_summary",
-    )
-    TOOL_REGISTRY.update({name: getattr(yf, name) for name in names})
+def register_tools(yf: YahooFinance) -> dict[str, Tool]:
+    """Build an isolated registry for one server instance."""
+    return {name: getattr(yf, name) for name in TOOL_NAMES}
 
 
 async def call_registered_tool(
@@ -1138,14 +1285,14 @@ async def call_registered_tool(
 
 
 async def serve() -> None:
-    register_tools(YahooFinance())
-    tools = [generate_tool(method) for method in TOOL_REGISTRY.values()]
+    registry = register_tools(YahooFinance())
+    tools = [generate_tool(method) for method in registry.values()]
 
     async def list_tools(_context: Any, _params: Any) -> ListToolsResult:
         return ListToolsResult(tools=tools)
 
     async def call_tool(_context: Any, params: CallToolRequestParams) -> CallToolResult:
-        return await call_registered_tool(TOOL_REGISTRY, params)
+        return await call_registered_tool(registry, params)
 
     server = Server(
         "mcp-yahoo-finance",
