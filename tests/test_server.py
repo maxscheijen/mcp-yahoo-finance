@@ -1,9 +1,11 @@
+import asyncio
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
-from mcp.types import Tool
+from mcp.types import CallToolRequestParams, Tool
 
-from mcp_yahoo_finance.server import YahooFinance
+from mcp_yahoo_finance.server import YahooFinance, call_registered_tool
 from mcp_yahoo_finance.utils import generate_tool
 
 
@@ -156,6 +158,72 @@ def test_empty_result_has_consistent_error_shape():
         "error": {
             "code": "NO_DATA",
             "message": "No historical data found for AAPL",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_registered_tool_does_not_block_the_event_loop() -> None:
+    events: list[str] = []
+
+    def slow_tool() -> dict:
+        events.append("slow-start")
+        time.sleep(0.05)
+        events.append("slow-end")
+        return {"ok": True}
+
+    async def heartbeat() -> None:
+        await asyncio.sleep(0.01)
+        events.append("heartbeat")
+
+    result, _ = await asyncio.gather(
+        call_registered_tool(
+            {"slow": slow_tool},
+            CallToolRequestParams(name="slow", arguments={}),
+        ),
+        heartbeat(),
+    )
+
+    assert result.structured_content == {"ok": True}
+    assert events.index("heartbeat") < events.index("slow-end")
+
+
+@pytest.mark.asyncio
+async def test_registered_tool_returns_timeout_error() -> None:
+    def slow_tool() -> dict:
+        time.sleep(0.05)
+        return {"ok": True}
+
+    result = await call_registered_tool(
+        {"slow": slow_tool},
+        CallToolRequestParams(name="slow", arguments={}),
+        timeout=0.001,
+    )
+
+    assert result.is_error is True
+    assert result.structured_content == {
+        "error": {
+            "code": "UPSTREAM_TIMEOUT",
+            "message": "Tool slow timed out after 0.001 seconds",
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_registered_tool_normalizes_unexpected_exceptions() -> None:
+    def broken_tool() -> dict:
+        raise RuntimeError("connection failed")
+
+    result = await call_registered_tool(
+        {"broken": broken_tool},
+        CallToolRequestParams(name="broken", arguments={}),
+    )
+
+    assert result.is_error is True
+    assert result.structured_content == {
+        "error": {
+            "code": "UPSTREAM_ERROR",
+            "message": "Error running broken: connection failed",
         }
     }
 

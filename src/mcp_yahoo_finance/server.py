@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Literal
@@ -24,6 +26,9 @@ from mcp_yahoo_finance.utils import (
 )
 
 ToolResult = dict[str, Any]
+Tool = Callable[..., ToolResult]
+
+TOOL_TIMEOUT_SECONDS = 30.0
 
 
 def error_result(code: str, message: str) -> ToolResult:
@@ -1106,6 +1111,32 @@ def register_tools(yf: YahooFinance) -> None:
     TOOL_REGISTRY.update({name: getattr(yf, name) for name in names})
 
 
+async def call_registered_tool(
+    registry: Mapping[str, Tool],
+    params: CallToolRequestParams,
+    timeout: float = TOOL_TIMEOUT_SECONDS,
+) -> CallToolResult:
+    """Run a synchronous tool without blocking the MCP event loop."""
+    if params.name not in registry:
+        return tool_result_to_mcp(
+            error_result("UNKNOWN_TOOL", f"Unknown tool: {params.name}")
+        )
+
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(registry[params.name], **(params.arguments or {})),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        result = error_result(
+            "UPSTREAM_TIMEOUT",
+            f"Tool {params.name} timed out after {timeout:g} seconds",
+        )
+    except Exception as exc:
+        result = error_result("UPSTREAM_ERROR", f"Error running {params.name}: {exc}")
+    return tool_result_to_mcp(result)
+
+
 async def serve() -> None:
     register_tools(YahooFinance())
     tools = [generate_tool(method) for method in TOOL_REGISTRY.values()]
@@ -1114,13 +1145,7 @@ async def serve() -> None:
         return ListToolsResult(tools=tools)
 
     async def call_tool(_context: Any, params: CallToolRequestParams) -> CallToolResult:
-        if params.name not in TOOL_REGISTRY:
-            return tool_result_to_mcp(
-                error_result("UNKNOWN_TOOL", f"Unknown tool: {params.name}")
-            )
-        return tool_result_to_mcp(
-            TOOL_REGISTRY[params.name](**(params.arguments or {}))
-        )
+        return await call_registered_tool(TOOL_REGISTRY, params)
 
     server = Server(
         "mcp-yahoo-finance",
