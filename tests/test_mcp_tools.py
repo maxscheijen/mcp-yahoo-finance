@@ -59,6 +59,8 @@ def test_register_tools_contains_every_public_mcp_tool() -> None:
 
     assert set(registry) == {
         "get_current_stock_price",
+        "get_rich_quote",
+        "get_company_overview",
         "get_symbol_comparison",
         "get_performance_analysis",
         "get_stock_price_by_date",
@@ -162,6 +164,18 @@ def test_remaining_tool_success_paths_are_mocked() -> None:
             lambda ticker: setattr(ticker, "info", {}),
             {"symbol": "AAPL"},
             "No current price found for AAPL",
+        ),
+        (
+            "get_rich_quote",
+            lambda ticker: setattr(ticker, "info", {}),
+            {"symbol": "AAPL"},
+            "No quote data found for AAPL",
+        ),
+        (
+            "get_company_overview",
+            lambda ticker: setattr(ticker, "info", {}),
+            {"symbol": "AAPL"},
+            "No company overview found for AAPL",
         ),
         (
             "get_symbol_comparison",
@@ -304,6 +318,8 @@ def test_tools_return_consistent_no_data_errors(
     "method, arguments",
     [
         ("get_current_stock_price", {"symbol": ""}),
+        ("get_rich_quote", {"symbol": ""}),
+        ("get_company_overview", {"symbol": ""}),
         ("get_stock_price_by_date", {"symbol": "AAPL", "date": "01-02-2025"}),
         (
             "get_stock_price_date_range",
