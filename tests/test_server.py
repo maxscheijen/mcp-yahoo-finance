@@ -14,6 +14,8 @@ def client_tools() -> list[Tool]:
     yf = YahooFinance()
     return [
         generate_tool(yf.get_current_stock_price),
+        generate_tool(yf.get_rich_quote),
+        generate_tool(yf.get_company_overview),
         generate_tool(yf.get_symbol_comparison),
         generate_tool(yf.get_performance_analysis),
         generate_tool(yf.get_stock_price_by_date),
@@ -31,6 +33,7 @@ def client_tools() -> list[Tool]:
         generate_tool(yf.get_recommendations),
         generate_tool(yf.get_option_expiration_dates),
         generate_tool(yf.get_option_chain),
+        generate_tool(yf.get_option_summary),
     ]
 
 
@@ -39,6 +42,8 @@ def client_tools() -> list[Tool]:
     "tool_name",
     [
         "get_current_stock_price",
+        "get_rich_quote",
+        "get_company_overview",
         "get_symbol_comparison",
         "get_performance_analysis",
         "get_stock_price_by_date",
@@ -56,6 +61,7 @@ def client_tools() -> list[Tool]:
         "get_recommendations",
         "get_option_expiration_dates",
         "get_option_chain",
+        "get_option_summary",
     ],
 )
 async def test_list_tools(client_tools: list[Tool], tool_name) -> None:
@@ -339,6 +345,74 @@ def test_current_price_includes_quote_metadata():
     assert result["price"] == 123.45
     assert result["currency"] == "USD"
     assert result["source"] == "Yahoo Finance"
+
+
+def test_rich_quote_is_normalized_and_includes_source_metadata():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.info = {
+            "symbol": "AAPL",
+            "regularMarketPrice": 123.45,
+            "previousClose": 120.0,
+            "regularMarketOpen": 121.0,
+            "regularMarketDayHigh": 125.0,
+            "regularMarketDayLow": 119.5,
+            "regularMarketVolume": 1000000,
+            "marketState": "REGULAR",
+            "currency": "USD",
+            "exchange": "NMS",
+            "regularMarketTime": 1735831800,
+        }
+
+        result = YahooFinance().get_rich_quote("aapl")
+
+    assert result == {
+        "symbol": "AAPL",
+        "currentPrice": 123.45,
+        "previousClose": 120.0,
+        "absoluteChange": pytest.approx(3.45),
+        "percentChange": pytest.approx(2.875),
+        "open": 121.0,
+        "dayHigh": 125.0,
+        "dayLow": 119.5,
+        "volume": 1000000,
+        "marketStatus": "REGULAR",
+        "currency": "USD",
+        "exchange": "NMS",
+        "timestamp": "2025-01-02T15:30:00+00:00",
+        "source": {
+            "provider": "Yahoo Finance",
+            "endpoint": "info",
+            "fetchedAt": result["source"]["fetchedAt"],
+        },
+    }
+
+
+def test_company_overview_represents_missing_fields_consistently():
+    with patch("mcp_yahoo_finance.server.Ticker") as mock_ticker_class:
+        mock_ticker_class.return_value.info = {
+            "shortName": "Apple",
+            "industry": "Consumer Electronics",
+            "website": " ",
+            "longBusinessSummary": "Makes devices.",
+        }
+
+        result = YahooFinance().get_company_overview("aapl")
+
+    assert result == {
+        "symbol": "AAPL",
+        "companyName": "Apple",
+        "sector": None,
+        "industry": "Consumer Electronics",
+        "marketCap": None,
+        "website": None,
+        "employeeCount": None,
+        "description": "Makes devices.",
+        "source": {
+            "provider": "Yahoo Finance",
+            "endpoint": "info",
+            "fetchedAt": result["source"]["fetchedAt"],
+        },
+    }
 
 
 def test_symbol_comparison_is_bounded_and_keeps_missing_symbols():

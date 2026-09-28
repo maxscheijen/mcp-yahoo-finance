@@ -76,28 +76,42 @@ Add this to your `.vscode/mcp.json`:
 }
 ```
 
-## Examples of Questions
+## Examples of questions
 
 1. "What is the stock price of Apple?"
-2. "What is the difference in stock price between Apple and Google?"
-3. "How much did the stock price of Apple change between 2024-01-01 and 2025-01-01?"
-4. "What are the available options expiration dates for AAPL?"
-5. "Show me the options chain for AAPL expiring on 2024-01-19"
-6. "What are the call and put options for Tesla?"
+2. "Give me a rich quote for AAPL with the previous close, intraday range, and market status."
+3. "Show me the company overview for Nvidia."
+4. "What is the difference in stock price between Apple and Google?"
+5. "How much did the stock price of Apple change between 2024-01-01 and 2025-01-01?"
+6. "What are the available options expiration dates for AAPL?"
+7. "Show me the options chain for AAPL expiring on 2024-01-19"
+8. "What are the call and put options for Tesla?"
 
 ## Response format
 
-Tool calls return JSON-compatible structured data. For example, a current price
+Tool calls return JSON-compatible structured data. For example, a rich quote
 looks like this:
 
 ```json
 {
   "symbol": "AAPL",
-  "price": 243.5822,
+  "currentPrice": 243.5822,
+  "previousClose": 241.33,
+  "absoluteChange": 2.2522,
+  "percentChange": 0.9331,
+  "open": 242.1,
+  "dayHigh": 244.2,
+  "dayLow": 241.9,
+  "volume": 45678901,
+  "marketStatus": "REGULAR",
   "currency": "USD",
   "exchange": "NMS",
-  "source": "Yahoo Finance",
-  "timestamp": "2025-01-02T15:30:00+00:00"
+  "timestamp": "2025-01-02T15:30:00+00:00",
+  "source": {
+    "provider": "Yahoo Finance",
+    "endpoint": "info",
+    "fetchedAt": "2025-01-02T15:30:01+00:00"
+  }
 }
 ```
 
@@ -120,12 +134,12 @@ default (split and dividend adjustments). `get_historical_stock_prices` accepts
 `adjusted: false` when unadjusted OHLC values are required. A single-date
 lookup and a date range use inclusive calendar dates; weekends and market
 holidays return a structured `NO_DATA` error when no trading row exists.
-Missing numeric values are represented as `null`. News is limited to 10
-articles by default (up to 100), normalizes title, URL, publisher, thumbnail,
-related symbols, and `publishedAt` as a UTC ISO 8601 timestamp, and accepts
-optional inclusive `start_date` and `end_date` filters. Recommendations,
-earnings, dividends, statements, and options use the same top-level `symbol`
-field and return provider-shaped data when it is available.
+Missing quote and company-overview fields are represented as `null`. News is
+limited to 10 articles by default (up to 100), normalizes title, URL,
+publisher, thumbnail, related symbols, and `publishedAt` as a UTC ISO 8601
+timestamp, and accepts optional inclusive `start_date` and `end_date` filters.
+Recommendations, earnings, dividends, statements, and options use the same
+top-level `symbol` field and return provider-shaped data when it is available.
 
 ## Available tools
 
@@ -135,6 +149,8 @@ symbols, such as `AAPL` or `MSFT`.
 | Tool | Purpose |
 | --- | --- |
 | `get_current_stock_price` | Current price and quote metadata |
+| `get_rich_quote` | Normalized quote snapshot with price, change, session range, market status, and source metadata |
+| `get_company_overview` | Normalized company profile with sector, industry, market cap, website, employee count, description, and source metadata |
 | `get_symbol_comparison` | Current quote comparison for up to 20 symbols |
 | `get_performance_analysis` | Bounded multi-symbol returns, moving averages, volatility, drawdown, benchmark-relative return, and correlation |
 | `get_stock_price_by_date` | Adjusted closing price for one trading date |

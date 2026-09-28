@@ -192,6 +192,92 @@ class YahooFinance:
     ) -> Any:
         return self.adapter.request(symbol, operation, cache_key=cache_key)
 
+    @staticmethod
+    def _normalize_scalar(value: Any) -> Any:
+        value = to_json_compatible(value)
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @staticmethod
+    def _info_field(info: Mapping[str, Any], *keys: str) -> Any:
+        for key in keys:
+            value = info.get(key)
+            if value is not None:
+                return value
+        return None
+
+    @staticmethod
+    def _source_metadata(endpoint: str) -> dict[str, str]:
+        return {
+            "provider": "Yahoo Finance",
+            "endpoint": endpoint,
+            "fetchedAt": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @classmethod
+    def _market_timestamp(cls, value: Any) -> str | None:
+        value = cls._normalize_scalar(value)
+        if value is None:
+            return None
+        try:
+            return datetime.fromtimestamp(float(value), timezone.utc).isoformat()
+        except (TypeError, ValueError, OSError):
+            return None
+
+    def _build_rich_quote(self, symbol: str, info: Mapping[str, Any]) -> ToolResult:
+        current_price = self._normalize_scalar(
+            self._info_field(info, "regularMarketPrice", "currentPrice")
+        )
+        previous_close = self._normalize_scalar(
+            self._info_field(info, "regularMarketPreviousClose", "previousClose")
+        )
+        absolute_change = self._normalize_scalar(
+            self._info_field(info, "regularMarketChange")
+        )
+        if (
+            absolute_change is None
+            and current_price is not None
+            and previous_close is not None
+        ):
+            absolute_change = current_price - previous_close
+        percent_change = self._normalize_scalar(
+            self._info_field(info, "regularMarketChangePercent")
+        )
+        if (
+            percent_change is None
+            and absolute_change is not None
+            and previous_close not in (None, 0)
+        ):
+            percent_change = absolute_change / previous_close * 100
+        return {
+            "symbol": self._normalize_scalar(info.get("symbol")) or symbol,
+            "currentPrice": current_price,
+            "previousClose": previous_close,
+            "absoluteChange": absolute_change,
+            "percentChange": percent_change,
+            "open": self._normalize_scalar(self._info_field(info, "regularMarketOpen")),
+            "dayHigh": self._normalize_scalar(
+                self._info_field(info, "regularMarketDayHigh", "dayHigh")
+            ),
+            "dayLow": self._normalize_scalar(
+                self._info_field(info, "regularMarketDayLow", "dayLow")
+            ),
+            "volume": self._normalize_scalar(
+                self._info_field(info, "regularMarketVolume", "volume")
+            ),
+            "marketStatus": self._normalize_scalar(
+                self._info_field(info, "marketState")
+            ),
+            "currency": self._normalize_scalar(self._info_field(info, "currency")),
+            "exchange": self._normalize_scalar(
+                self._info_field(info, "exchange", "fullExchangeName")
+            ),
+            "timestamp": self._market_timestamp(info.get("regularMarketTime")),
+            "source": self._source_metadata("info"),
+        }
+
     def get_current_stock_price(self, symbol: str) -> ToolResult:
         """Get the current stock price based on stock symbol.
 
@@ -215,6 +301,85 @@ class YahooFinance:
                 result["timestamp"] = datetime.fromtimestamp(
                     info["regularMarketTime"], timezone.utc
                 ).isoformat()
+            return to_json_compatible(result)
+        except Exception as exc:
+            return error_result(_error_code(exc), f"Error fetching {symbol}: {exc}")
+
+    def get_rich_quote(self, symbol: str) -> ToolResult:
+        """Get a normalized quote snapshot for one stock symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            info = self._request(symbol, lambda stock: stock.info, "info")
+            result = self._build_rich_quote(symbol, info)
+            if not any(
+                result[field] is not None
+                for field in (
+                    "currentPrice",
+                    "previousClose",
+                    "absoluteChange",
+                    "percentChange",
+                    "open",
+                    "dayHigh",
+                    "dayLow",
+                    "volume",
+                )
+            ):
+                return error_result("NO_DATA", f"No quote data found for {symbol}")
+            return to_json_compatible(result)
+        except Exception as exc:
+            return error_result(_error_code(exc), f"Error fetching {symbol}: {exc}")
+
+    def get_company_overview(self, symbol: str) -> ToolResult:
+        """Get a normalized company overview for one stock symbol.
+
+        Args:
+            symbol (str): Stock symbol in Yahoo Finance format.
+        """
+        try:
+            symbol = validate_symbol(symbol)
+            info = self._request(symbol, lambda stock: stock.info, "info")
+            result = {
+                "symbol": self._normalize_scalar(info.get("symbol")) or symbol,
+                "companyName": self._normalize_scalar(
+                    self._info_field(info, "longName", "shortName", "displayName")
+                ),
+                "sector": self._normalize_scalar(
+                    self._info_field(info, "sectorDisp", "sector")
+                ),
+                "industry": self._normalize_scalar(
+                    self._info_field(info, "industryDisp", "industry")
+                ),
+                "marketCap": self._normalize_scalar(
+                    self._info_field(info, "marketCap")
+                ),
+                "website": self._normalize_scalar(self._info_field(info, "website")),
+                "employeeCount": self._normalize_scalar(
+                    self._info_field(info, "fullTimeEmployees")
+                ),
+                "description": self._normalize_scalar(
+                    self._info_field(info, "longBusinessSummary")
+                ),
+                "source": self._source_metadata("info"),
+            }
+            if not any(
+                result[field] is not None
+                for field in (
+                    "companyName",
+                    "sector",
+                    "industry",
+                    "marketCap",
+                    "website",
+                    "employeeCount",
+                    "description",
+                )
+            ):
+                return error_result(
+                    "NO_DATA", f"No company overview found for {symbol}"
+                )
             return to_json_compatible(result)
         except Exception as exc:
             return error_result(_error_code(exc), f"Error fetching {symbol}: {exc}")
@@ -1232,6 +1397,8 @@ class YahooFinance:
 
 TOOL_NAMES = (
     "get_current_stock_price",
+    "get_rich_quote",
+    "get_company_overview",
     "get_symbol_comparison",
     "get_performance_analysis",
     "get_stock_price_by_date",
