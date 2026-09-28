@@ -11,29 +11,9 @@ The workflow then:
 4. checks the distributions with `uvx twine check dist/*`
 5. publishes `dist/` to PyPI
 
-## Normal release flow
+## Preferred release flow
 
-If you can push directly to `main`, the flow is:
-
-```sh
-make bump-patch          # or bump-minor / bump-major
-make verify-release
-git add pyproject.toml uv.lock
-git commit -m "Release 0.1.5"
-make tag-release VERSION=0.1.5
-git push origin main
-git push origin v0.1.5
-```
-
-You can also set the version yourself:
-
-```sh
-uv version 0.1.5
-```
-
-## Release flow when `main` is protected
-
-If you cannot push directly to `main`, do the release in two stages.
+Prepare every release in a pull request, even when you can push directly to `main`. This keeps the version bump reviewed and ensures CI passes before the release is tagged.
 
 ### 1. Open a release PR
 
@@ -74,6 +54,22 @@ git push origin v0.1.5
 ```
 
 That tag push starts the release workflow.
+
+You can also set the version with `uv version 0.1.5` instead of using a Make target.
+
+## Direct release flow
+
+Use the direct flow only when a release PR is not practical. If you can push directly to `main`, run:
+
+```sh
+make bump-patch          # or bump-minor / bump-major
+make verify-release
+git add pyproject.toml uv.lock
+git commit -m "Release 0.1.5"
+make tag-release VERSION=0.1.5
+git push origin main
+git push origin v0.1.5
+```
 
 ## Important detail
 
