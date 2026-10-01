@@ -1,50 +1,23 @@
-## Summary
+### Issue for this PR
 
-<!-- Briefly describe what this PR changes and why. -->
+Closes #
 
-## Linked Issue
-
-<!-- Example: Closes #123 -->
-
-## Type of Change
+### Type of change
 
 - [ ] Bug fix
 - [ ] New feature
-- [ ] Documentation update
-- [ ] Refactor
-- [ ] Maintenance / chore
-- [ ] Breaking change
+- [ ] Refactor / code improvement
+- [ ] Documentation
 
-## Changes
+### What does this PR do?
 
-- 
-- 
-- 
+Please provide a description of the issue, the changes you made to fix it, and why they work. It is expected that you understand why your changes work and if you do not understand why at least say as much so a maintainer knows how much to value the PR.
 
-## Testing
+**If you paste a large clearly AI generated description here your PR may be IGNORED or CLOSED!**
 
-<!-- List the checks you ran locally. -->
+### How did you verify your code works?
 
-- [ ] `uv run pytest`
-- [ ] `uv run ruff check .`
-- [ ] `uv run ruff format --check .`
-- [ ] `uv build`
+### Checklist
 
-## Screenshots / Example Output
-
-<!-- Add screenshots, sample tool output, or notes if helpful. -->
-
-## Breaking Changes
-
-<!-- Describe any breaking changes and required migration steps, or write "None". -->
-
-## Checklist
-
-- [ ] I updated documentation if needed
-- [ ] I added or updated tests if needed
-- [ ] I kept the change focused
-- [ ] I documented any breaking changes
-
-## Reviewer Notes
-
-<!-- Anything reviewers should pay special attention to? -->
+- [ ] I have tested my changes locally
+- [ ] I have not included unrelated changes in this PR
