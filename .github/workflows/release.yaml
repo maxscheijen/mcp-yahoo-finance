@@ -2,11 +2,13 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
+    paths:
+      - "pyproject.toml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   publish:
@@ -19,8 +21,20 @@ jobs:
       id-token: write
 
     steps:
+      - name: Restrict releases to repository owner
+        env:
+          RELEASE_ACTOR: ${{ github.actor }}
+        shell: bash
+        run: |
+          if [[ "${RELEASE_ACTOR,,}" != "maxscheijen" ]]; then
+            echo "Only maxscheijen can publish a release (triggered by ${RELEASE_ACTOR})."
+            exit 1
+          fi
+
       - name: Check out source
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
@@ -28,15 +42,20 @@ jobs:
           python-version: "3.13"
 
       - name: Check release version
+        id: release_version
         shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
           project_version="$(uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          previous_version="$(git show "${BEFORE_SHA}:pyproject.toml" 2>/dev/null | uv run --no-project python -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])' || true)"
 
-          if [[ "$tag_version" != "$project_version" ]]; then
-            echo "Tag version ($tag_version) does not match pyproject.toml ($project_version)."
+          if [[ -z "$previous_version" || "$project_version" == "$previous_version" ]]; then
+            echo "pyproject.toml must change the project version to publish a release."
             exit 1
           fi
+
+          echo "version=$project_version" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
         run: uv run pytest
@@ -46,6 +65,24 @@ jobs:
 
       - name: Check distributions
         run: uvx twine check dist/*
+
+      - name: Create matching release tag
+        env:
+          RELEASE_VERSION: ${{ steps.release_version.outputs.version }}
+        shell: bash
+        run: |
+          tag="v${RELEASE_VERSION}"
+
+          if git show-ref --verify --quiet "refs/tags/${tag}"; then
+            tag_commit="$(git rev-list -n 1 "$tag")"
+            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+              echo "Tag ${tag} already exists on a different commit."
+              exit 1
+            fi
+          else
+            git tag "$tag"
+            git push origin "$tag"
+          fi
 
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
