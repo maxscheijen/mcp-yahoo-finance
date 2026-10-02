@@ -1,4 +1,5 @@
 import asyncio
+import contextvars
 import json
 import time
 from collections.abc import Callable, Mapping
@@ -35,6 +36,37 @@ TOOL_TIMEOUT_SECONDS = 30.0
 UPSTREAM_TIMEOUT_SECONDS = 10.0
 UPSTREAM_MAX_RETRIES = 2
 UPSTREAM_CACHE_TTL_SECONDS = 30.0
+
+# The async MCP wrapper sets this before dispatching a synchronous tool. The
+# value is copied into the worker thread by asyncio.to_thread, so every
+# adapter request in one tool call shares the same deadline.
+_request_deadline: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "request_deadline", default=None
+)
+
+
+class _DeadlineSession(Session):
+    """Apply adapter and end-to-end deadlines to requests made by yfinance."""
+
+    def __init__(self, timeout: float) -> None:
+        super().__init__()
+        self.default_timeout = timeout
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Any:
+        configured = kwargs.get("timeout", self.default_timeout)
+        if isinstance(configured, tuple):
+            configured_timeout = min(configured)
+        else:
+            configured_timeout = configured
+        timeout = min(float(configured_timeout), self.default_timeout)
+        deadline = _request_deadline.get()
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Yahoo Finance request deadline exceeded")
+            timeout = min(timeout, remaining)
+        kwargs["timeout"] = (timeout, timeout)
+        return super().request(method, url, **kwargs)
 
 
 def error_result(code: str, message: str) -> ToolResult:
@@ -102,9 +134,8 @@ class YahooFinanceAdapter:
         if retry_backoff < 0:
             raise ValueError("retry_backoff must be non-negative")
 
-        self.session = session
-        if self.session:
-            self.session.verify = verify
+        self.session = session or _DeadlineSession(timeout)
+        self.session.verify = verify
         self.timeout = timeout
         self.max_retries = max_retries
         self.cache_ttl = cache_ttl
@@ -127,8 +158,9 @@ class YahooFinanceAdapter:
         operation: Callable[[Any], Any],
         *,
         cache_key: str,
+        deadline: float | None = None,
     ) -> Any:
-        """Run one upstream operation with a bounded retry policy."""
+        """Run one upstream operation without exceeding the tool deadline."""
         key = f"{symbol}:{cache_key}"
         now = time.monotonic()
         cached = self._cache.get(key)
@@ -137,31 +169,50 @@ class YahooFinanceAdapter:
         if cached:
             self._cache.pop(key, None)
 
+        deadline = deadline if deadline is not None else _request_deadline.get()
         last_error: Exception | None = None
         for attempt in range(self.max_retries + 1):
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                raise TimeoutError("Yahoo Finance request deadline exceeded")
+
             executor = ThreadPoolExecutor(max_workers=1)
             future = executor.submit(operation, self.ticker(symbol))
+            timeout = (
+                self.timeout if remaining is None else min(self.timeout, remaining)
+            )
             try:
-                result = future.result(timeout=self.timeout)
+                result = future.result(timeout=timeout)
                 executor.shutdown(wait=True)
                 if self.cache_ttl:
                     self._cache[key] = (time.monotonic() + self.cache_ttl, result)
                 return result
             except FutureTimeoutError as exc:
                 last_error = TimeoutError(
-                    f"Yahoo Finance request timed out after {self.timeout:g} seconds"
+                    f"Yahoo Finance request timed out after {timeout:g} seconds"
                 )
                 future.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
-                if attempt == self.max_retries:
-                    raise last_error from exc
+                raise last_error from exc
             except Exception as exc:
                 executor.shutdown(wait=True)
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        "Yahoo Finance request deadline exceeded"
+                    ) from exc
                 last_error = exc
                 if attempt == self.max_retries:
                     raise
+
             if self.retry_backoff:
-                time.sleep(self.retry_backoff * (2**attempt))
+                delay = self.retry_backoff * (2**attempt)
+                if deadline is not None:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= delay:
+                        raise TimeoutError(
+                            "Yahoo Finance request deadline exceeded"
+                        ) from last_error
+                time.sleep(delay)
 
         raise last_error or RuntimeError("Yahoo Finance request failed")
 
@@ -1436,18 +1487,25 @@ async def call_registered_tool(
             error_result("UNKNOWN_TOOL", f"Unknown tool: {params.name}")
         )
 
+    deadline = time.monotonic() + timeout
+    token = _request_deadline.set(deadline)
     try:
-        result = await asyncio.wait_for(
-            asyncio.to_thread(registry[params.name], **(params.arguments or {})),
-            timeout=timeout,
-        )
-    except asyncio.TimeoutError:
-        result = error_result(
-            "UPSTREAM_TIMEOUT",
-            f"Tool {params.name} timed out after {timeout:g} seconds",
-        )
-    except Exception as exc:
-        result = error_result("UPSTREAM_ERROR", f"Error running {params.name}: {exc}")
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(registry[params.name], **(params.arguments or {})),
+                timeout=timeout,
+            )
+        except (asyncio.TimeoutError, TimeoutError):
+            result = error_result(
+                "UPSTREAM_TIMEOUT",
+                f"Tool {params.name} timed out after {timeout:g} seconds",
+            )
+        except Exception as exc:
+            result = error_result(
+                "UPSTREAM_ERROR", f"Error running {params.name}: {exc}"
+            )
+    finally:
+        _request_deadline.reset(token)
     return tool_result_to_mcp(result)
 
 

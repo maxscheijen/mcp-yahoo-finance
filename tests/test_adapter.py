@@ -23,7 +23,7 @@ def test_adapter_retries_failed_requests_and_caches_successes() -> None:
 
     assert first == second == {"price": 123}
     assert attempts == 2
-    ticker_class.assert_called_once_with(ticker="AAPL", session=None)
+    ticker_class.assert_called_once_with(ticker="AAPL", session=adapter.session)
 
 
 def test_adapter_does_not_cache_when_ttl_is_zero() -> None:
@@ -35,6 +35,30 @@ def test_adapter_does_not_cache_when_ttl_is_zero() -> None:
         adapter.request("AAPL", operation, cache_key="quote")
 
     assert operation.call_count == 2
+
+
+def test_adapter_deadline_stops_retries_and_backoff() -> None:
+    attempts = 0
+
+    def operation(_ticker):
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("temporary upstream failure")
+
+    with patch("mcp_yahoo_finance.server.Ticker"):
+        adapter = YahooFinanceAdapter(
+            max_retries=3,
+            retry_backoff=1,
+        )
+        with pytest.raises(TimeoutError, match="deadline exceeded"):
+            adapter.request(
+                "AAPL",
+                operation,
+                cache_key="deadline",
+                deadline=time.monotonic() + 0.01,
+            )
+
+    assert attempts == 1
 
 
 def test_adapter_raises_a_bounded_timeout() -> None:
