@@ -2,13 +2,11 @@ name: Release
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - "pyproject.toml"
+    tags:
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   publish:
@@ -42,20 +40,17 @@ jobs:
           python-version: "3.13"
 
       - name: Check release version
-        id: release_version
         shell: bash
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           project_version="$(uv run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          previous_version="$(git show "${BEFORE_SHA}:pyproject.toml" 2>/dev/null | uv run --no-project python -c 'import sys, tomllib; print(tomllib.loads(sys.stdin.read())["project"]["version"])' || true)"
+          tag_version="${RELEASE_TAG#v}"
 
-          if [[ -z "$previous_version" || "$project_version" == "$previous_version" ]]; then
-            echo "pyproject.toml must change the project version to publish a release."
+          if [[ "$project_version" != "$tag_version" ]]; then
+            echo "Tag ${RELEASE_TAG} does not match project version ${project_version}."
             exit 1
           fi
-
-          echo "version=$project_version" >> "$GITHUB_OUTPUT"
 
       - name: Run tests
         run: uv run pytest
@@ -65,24 +60,6 @@ jobs:
 
       - name: Check distributions
         run: uvx twine check dist/*
-
-      - name: Create matching release tag
-        env:
-          RELEASE_VERSION: ${{ steps.release_version.outputs.version }}
-        shell: bash
-        run: |
-          tag="v${RELEASE_VERSION}"
-
-          if git show-ref --verify --quiet "refs/tags/${tag}"; then
-            tag_commit="$(git rev-list -n 1 "$tag")"
-            if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
-              echo "Tag ${tag} already exists on a different commit."
-              exit 1
-            fi
-          else
-            git tag "$tag"
-            git push origin "$tag"
-          fi
 
       - name: Publish distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
