@@ -4,27 +4,23 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-yahoo-finance)
 ![PyPI - License](https://img.shields.io/pypi/l/mcp-yahoo-finance)
 
+MCP Yahoo Finance is a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server. It gets data from Yahoo Finance. You can use it to get stock prices, company data, past prices, financial reports, news, analyst ratings, earnings dates, dividends, and options data.
 
-A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for Yahoo Finance. It provides tools for prices, company information, historical data, financial statements, news, recommendations, earnings, dividends, and options.
+> This project is in early development. Tool names and response fields can change between releases.
 
-> `mcp-yahoo-finance` is in early development. Tool names and response fields may change between releases.
+## Install
 
-## Installation
+You can run `mcp-yahoo-finance` without a separate install. Use [`uvx`](https://docs.astral.sh/uv/guides/tools/).
 
-You can run `mcp-yahoo-finance` without a separate install by using
-[`uvx`](https://docs.astral.sh/uv/guides/tools/).
-
-### Using pip
-
-Using `pip`.
+### Use pip
 
 ```sh
 pip install mcp-yahoo-finance
 ```
 
-### Using Git
+### Use Git
 
-You can also install the package after cloning the repository to your machine.
+Clone the repository. Then install the development environment:
 
 ```sh
 git clone git@github.com:maxscheijen/mcp-yahoo-finance.git
@@ -32,11 +28,11 @@ cd mcp-yahoo-finance
 uv sync
 ```
 
-## Configuration
+## Configure
 
 ### Claude Desktop
 
-Add this to your `claude_desktop_config.json`:
+Add this entry to your `claude_desktop_config.json` file:
 
 ```json
 {
@@ -48,7 +44,8 @@ Add this to your `claude_desktop_config.json`:
     }
 }
 ```
-You can also use docker:
+
+You can also use Docker. Replace `IMAGE` with the Docker image name:
 
 ```json
 {
@@ -61,9 +58,9 @@ You can also use docker:
 }
 ```
 
-### VSCode
+### VS Code
 
-Add this to your `.vscode/mcp.json`:
+Add this entry to your `.vscode/mcp.json` file:
 
 ```json
 {
@@ -76,7 +73,9 @@ Add this to your `.vscode/mcp.json`:
 }
 ```
 
-## Examples of questions
+## Example questions
+
+You can ask questions like these:
 
 1. "What is the stock price of Apple?"
 2. "Give me a rich quote for AAPL with the previous close, intraday range, and market status."
@@ -84,13 +83,12 @@ Add this to your `.vscode/mcp.json`:
 4. "What is the difference in stock price between Apple and Google?"
 5. "How much did the stock price of Apple change between 2024-01-01 and 2025-01-01?"
 6. "What are the available options expiration dates for AAPL?"
-7. "Show me the options chain for AAPL expiring on 2024-01-19"
+7. "Show me the options chain for AAPL expiring on 2024-01-19."
 8. "What are the call and put options for Tesla?"
 
-## Response format
+## Response data
 
-Tool calls return JSON-compatible structured data. For example, a rich quote
-looks like this:
+Tools return data in JSON format. This is an example of a rich quote:
 
 ```json
 {
@@ -115,7 +113,7 @@ looks like this:
 }
 ```
 
-Errors use the same shape for every tool and are marked as MCP errors:
+Errors use the same format for all tools. An error includes an error code and a message:
 
 ```json
 {
@@ -126,59 +124,59 @@ Errors use the same shape for every tool and are marked as MCP errors:
 }
 ```
 
-Historical and tabular results keep their column names and include dates as
-`YYYY-MM-DD` calendar-date strings. This is true for both naive and
-timezone-aware Yahoo Finance indexes; the provider timezone is not exposed.
-Historical, single-date, and date-range price tools return adjusted prices by
-default (split and dividend adjustments). `get_historical_stock_prices` accepts
-`adjusted: false` when unadjusted OHLC values are required. A single-date
-lookup and a date range use inclusive calendar dates; weekends and market
-holidays return a structured `NO_DATA` error when no trading row exists.
-Missing quote and company-overview fields are represented as `null`. News is
-limited to 10 articles by default (up to 100), normalizes title, URL,
-publisher, thumbnail, related symbols, and `publishedAt` as a UTC ISO 8601
-timestamp, and accepts optional inclusive `start_date` and `end_date` filters.
-Recommendations, earnings, dividends, statements, and options use the same
-top-level `symbol` field and return provider-shaped data when it is available.
+Historical and table results keep the column names from the data source. Dates use the `YYYY-MM-DD` format. The server does not show the time zone used by Yahoo Finance.
+
+Historical price tools return adjusted prices by default. Adjusted prices include changes from stock splits and dividends. To get prices without these changes, set `adjusted` to `false` in `get_historical_stock_prices`.
+
+Date searches include both the start date and the end date. If a date is a weekend or market holiday, there may be no price data for that date. In that case, the tool returns a `NO_DATA` error.
+
+If quote or company data is missing, its value is `null`. The news tool returns 10 articles by default. It can return up to 100 articles. It includes the title, URL, publisher, thumbnail, related stock symbols, and publish time. The publish time uses UTC and the ISO 8601 format. You can set `start_date` and `end_date` to filter news. The filter includes both dates.
+
+Recommendation, earnings, dividend, financial report, and options tools use a top-level `symbol` field. They return data from Yahoo Finance when that data is available.
 
 ## Available tools
 
-The server exposes these tools. `symbol` values use Yahoo Finance ticker
-symbols, such as `AAPL` or `MSFT`.
+Use Yahoo Finance ticker symbols for `symbol` values. Examples are `AAPL` and `MSFT`.
 
 | Tool | Purpose |
 | --- | --- |
-| `get_current_stock_price` | Current price and quote metadata |
-| `get_rich_quote` | Normalized quote snapshot with price, change, session range, market status, and source metadata |
-| `get_company_overview` | Normalized company profile with sector, industry, market cap, website, employee count, description, and source metadata |
-| `get_symbol_comparison` | Current quote comparison for up to 20 symbols |
-| `get_performance_analysis` | Bounded multi-symbol returns, moving averages, volatility, drawdown, benchmark-relative return, and correlation |
-| `get_stock_price_by_date` | Adjusted closing price for one trading date |
-| `get_stock_price_date_range` | Adjusted closing prices for an inclusive date range |
-| `get_historical_stock_prices` | Historical prices by period and interval |
-| `get_dividends` | Dividend history |
-| `get_stock_splits` | Stock split history |
-| `get_capital_gains` | Capital-gains distributions |
-| `get_upcoming_dividends` | Upcoming dividend dates and rates |
-| `get_earnings_analytics` | Earnings surprises and estimates |
-| `get_income_statement` | Income statement by yearly, quarterly, or trailing frequency |
-| `get_cashflow` | Cash-flow statement by frequency |
-| `get_earning_dates` | Recent and upcoming earnings dates |
-| `get_news` | Bounded, normalized Yahoo Finance news with optional date filters |
-| `get_recommendations` | Analyst recommendations |
-| `get_option_expiration_dates` | Available option expirations |
-| `get_option_chain` | Bounded calls and puts for one expiration date with strike, moneyness, liquidity, spread, type, and count filters |
-| `get_option_summary` | Implied volatility, open interest, volume, put/call ratios, and max-pain summary for one expiration |
+| `get_current_stock_price` | Gets the current stock price and quote data. |
+| `get_rich_quote` | Gets a quote with price, price change, trading range, market status, and source data. |
+| `get_company_overview` | Gets a company profile with its sector, industry, market value, website, employee count, description, and source data. |
+| `get_symbol_comparison` | Compares current quotes for up to 20 symbols. |
+| `get_performance_analysis` | Compares returns, moving averages, volatility, drawdown, benchmark returns, and correlation for multiple symbols. |
+| `get_stock_price_by_date` | Gets the adjusted closing price for one trading date. |
+| `get_stock_price_date_range` | Gets adjusted closing prices for a date range. |
+| `get_historical_stock_prices` | Gets past prices for a period and time interval. |
+| `get_dividends` | Gets past dividend payments. |
+| `get_stock_splits` | Gets past stock splits. |
+| `get_capital_gains` | Gets capital-gains payments. |
+| `get_upcoming_dividends` | Gets future dividend dates and rates. |
+| `get_earnings_analytics` | Gets earnings results and estimates. |
+| `get_income_statement` | Gets an income statement by year, quarter, or trailing period. |
+| `get_cashflow` | Gets a cash flow statement by period. |
+| `get_earning_dates` | Gets past and future earnings dates. |
+| `get_news` | Gets Yahoo Finance news. You can set date filters. |
+| `get_recommendations` | Gets analyst recommendations. |
+| `get_option_expiration_dates` | Gets available option expiration dates. |
+| `get_option_chain` | Gets calls and puts for one expiration date. You can filter by strike price, moneyness, liquidity, spread, type, and number of results. |
+| `get_option_summary` | Gets implied volatility, open interest, volume, put/call ratios, and max pain for one expiration date. |
 
-Performance analysis uses split- and dividend-adjusted closes. Total return is
-`(last close / first close) - 1`; annualized volatility is the standard
-deviation of daily returns multiplied by `sqrt(252)`; maximum drawdown is the
-minimum drawdown from a running peak. Correlations use daily returns on shared
-trading dates, so symbols with unequal calendars remain comparable.
+## Performance calculations
 
-## Local development
+Performance analysis uses closing prices adjusted for stock splits and dividends.
 
-Install the locked development environment with `uv sync`, then run:
+Total return is `(last close / first close) - 1`.
+
+Annual volatility is the standard deviation of daily returns multiplied by `sqrt(252)`.
+
+Maximum drawdown is the largest fall from a previous high.
+
+The tool calculates correlation from daily returns on dates shared by the symbols. This lets it compare symbols that have different trading calendars.
+
+## Develop locally
+
+Run `uv sync` to install the locked development environment. Then run these commands:
 
 ```sh
 uv run pytest
@@ -187,7 +185,7 @@ uv run ruff format --check .
 uv build
 ```
 
-The Makefile provides shortcuts for the common commands:
+You can also use these Makefile commands:
 
 ```sh
 make test
@@ -195,11 +193,11 @@ make lint
 make docker-build
 ```
 
-The test suite mocks Yahoo Finance and does not make live provider requests.
+The tests use mock Yahoo Finance data. They do not make live requests to Yahoo Finance.
 
-## Build
+## Build the Docker image
 
-Build the Docker image with:
+Run this command:
 
 ```sh
 docker build -t mcp-yahoo-finance .
@@ -207,13 +205,12 @@ docker build -t mcp-yahoo-finance .
 
 ## Test with MCP Inspector
 
+Run this command:
+
 ```sh
 npx @modelcontextprotocol/inspector uv run mcp-yahoo-finance
 ```
 
-## Yahoo Finance limitations
+## Yahoo Finance limits
 
-Yahoo Finance data is provided by a third party and may be delayed, incomplete,
-or unavailable. This project does not provide investment advice and does not
-guarantee the accuracy, completeness, or timeliness of returned data. Check
-important values against an authoritative source before relying on them.
+Yahoo Finance is a third-party data source. Its data can be late, incomplete, or unavailable. This project does not give investment advice. It does not guarantee that the data is correct, complete, or up to date. Check important data with an authoritative source before you use it.
