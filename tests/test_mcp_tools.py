@@ -63,6 +63,7 @@ def test_register_tools_contains_every_public_mcp_tool() -> None:
         "get_company_overview",
         "get_symbol_comparison",
         "get_performance_analysis",
+        "get_portfolio_analysis",
         "get_stock_price_by_date",
         "get_stock_price_date_range",
         "get_historical_stock_prices",

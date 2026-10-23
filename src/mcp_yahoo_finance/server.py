@@ -1,6 +1,7 @@
 import asyncio
 import contextvars
 import json
+import math
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -614,6 +615,269 @@ class YahooFinance:
             if errors:
                 result["errors"] = errors
             return result
+        except Exception as exc:
+            return error_result(_error_code(exc), str(exc))
+
+    def get_portfolio_analysis(
+        self,
+        symbols: list[str],
+        start_date: str,
+        end_date: str,
+        quantities: list[float] | None = None,
+        weights: list[float] | None = None,
+        benchmark_symbol: str | None = None,
+    ) -> ToolResult:
+        """Analyze a portfolio or watchlist using adjusted historical prices.
+
+        Supply quantities for current position values, weights for a weighted
+        portfolio, or neither for watchlist mode. Weights are normalized to
+        sum to one. Portfolio totals require matching quote currencies.
+
+        Args:
+            symbols (list[str]): One to 20 unique Yahoo Finance symbols.
+            start_date (str): Inclusive start date in YYYY-MM-DD format.
+            end_date (str): Inclusive end date in YYYY-MM-DD format.
+            quantities (list[float]): Positive share quantities, one per symbol.
+            weights (list[float]): Non-negative portfolio weights, one per symbol.
+            benchmark_symbol (str): Optional benchmark used for relative return.
+        """
+        try:
+            if not isinstance(symbols, list) or not symbols:
+                raise ValueError("symbols must be a non-empty list")
+            normalized = [validate_symbol(symbol) for symbol in symbols]
+            if len(normalized) > 20:
+                raise ValueError("symbols must contain at most 20 symbols")
+            if len(set(normalized)) != len(normalized):
+                raise ValueError("symbols must not contain duplicates")
+            validate_date(start_date, "start_date")
+            validate_date(end_date, "end_date")
+            if start_date > end_date:
+                raise ValueError("start_date must be on or before end_date")
+            if quantities is not None and weights is not None:
+                raise ValueError("provide quantities or weights, not both")
+            sizing = quantities if quantities is not None else weights
+            if sizing is not None:
+                if not isinstance(sizing, list) or len(sizing) != len(normalized):
+                    raise ValueError("quantities or weights must match symbols")
+                try:
+                    sizing = [float(value) for value in sizing]
+                except (TypeError, ValueError) as exc:
+                    raise ValueError("quantities and weights must be numbers") from exc
+                if any(not math.isfinite(value) for value in sizing):
+                    raise ValueError("quantities and weights must be finite")
+                if quantities is not None and any(value <= 0 for value in sizing):
+                    raise ValueError("quantities must be greater than zero")
+                if weights is not None and any(value < 0 for value in sizing):
+                    raise ValueError("weights must be non-negative")
+                if weights is not None and sum(sizing) <= 0:
+                    raise ValueError("weights must have a positive total")
+            benchmark = validate_symbol(benchmark_symbol) if benchmark_symbol else None
+            if benchmark in normalized:
+                raise ValueError("benchmark_symbol must not also be a portfolio symbol")
+            requested = normalized + (
+                [benchmark] if benchmark and benchmark not in normalized else []
+            )
+            histories: dict[str, pd.Series] = {}
+            errors: list[dict[str, str]] = []
+            currencies: dict[str, str | None] = {}
+            current_prices: dict[str, float] = {}
+            for symbol in requested:
+                try:
+                    frame = self._request(
+                        symbol,
+                        lambda stock: stock.history(
+                            start=start_date, end=_next_date(end_date), auto_adjust=True
+                        ),
+                        f"history:{start_date}:{end_date}:adjusted",
+                    )
+                    if (
+                        not isinstance(frame, pd.DataFrame)
+                        or frame.empty
+                        or "Close" not in frame
+                    ):
+                        raise ValueError(f"No historical data found for {symbol}")
+                    close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+                    close.index = pd.to_datetime(close.index).tz_localize(None)
+                    if close.empty or (close <= 0).any():
+                        raise ValueError(
+                            f"No valid historical prices found for {symbol}"
+                        )
+                    histories[symbol] = close
+                    info = self._request(symbol, lambda stock: stock.info, "info")
+                    currency = info.get("currency")
+                    currencies[symbol] = currency
+                    if symbol != benchmark:
+                        price = info.get("regularMarketPrice") or info.get(
+                            "currentPrice"
+                        )
+                        if price is None or float(price) <= 0:
+                            raise ValueError(f"No current price found for {symbol}")
+                        current_prices[symbol] = float(price)
+                except Exception as exc:
+                    errors.append({"symbol": symbol, "message": str(exc)})
+
+            available = [
+                symbol
+                for symbol in normalized
+                if symbol in histories and symbol in current_prices
+            ]
+            if not available:
+                return error_result(
+                    "NO_DATA", "No usable price data found for requested symbols"
+                )
+            positions = []
+            for index, symbol in enumerate(normalized):
+                if symbol not in available:
+                    continue
+                history_metrics = self._performance_metrics(histories[symbol])
+                position: dict[str, Any] = {
+                    "symbol": symbol,
+                    "currency": currencies[symbol],
+                    "currentPrice": current_prices[symbol],
+                    "currentValue": current_prices[symbol] * sizing[index]
+                    if quantities is not None
+                    else None,
+                    **history_metrics,
+                }
+                if weights is not None:
+                    position["inputWeight"] = sizing[index]
+                positions.append(position)
+
+            result: ToolResult = {
+                "mode": "watchlist" if sizing is None else "portfolio",
+                "symbols": available,
+                "startDate": start_date,
+                "endDate": end_date,
+                "adjustedHistoricalPrices": True,
+                "historicalPriceAssumption": "Adjusted close includes split and dividend adjustments; metrics describe adjusted historical returns.",
+                "missingDataHandling": "Symbols without valid history or a current quote are omitted and listed in errors. Portfolio returns forward-fill prices across unequal trading calendars.",
+                "positions": to_json_compatible(positions),
+            }
+            common_currencies = {currencies[symbol] for symbol in available}
+            if len(common_currencies) > 1 or None in common_currencies:
+                result["aggregateError"] = (
+                    "Aggregate values require a reported matching currency for every position."
+                )
+            else:
+                currency = next(iter(common_currencies))
+                result["currency"] = currency
+                if sizing is None:
+                    # A watchlist reports each symbol independently without
+                    # implying that the user owns a particular allocation.
+                    if errors:
+                        result["errors"] = errors
+                    return to_json_compatible(result)
+                if quantities is not None:
+                    values = pd.Series(
+                        {
+                            symbol: current_prices[symbol]
+                            * sizing[normalized.index(symbol)]
+                            for symbol in available
+                        }
+                    )
+                    total_value = float(values.sum())
+                    allocation = values / total_value
+                    aligned_prices = (
+                        pd.concat(
+                            {symbol: histories[symbol] for symbol in available}, axis=1
+                        )
+                        .sort_index()
+                        .ffill()
+                        .dropna(how="any")
+                    )
+                    daily_returns = aligned_prices.pct_change().dropna()
+                    aligned_portfolio_prices = aligned_prices
+                    historical_quantities = pd.Series(
+                        {
+                            symbol: sizing[normalized.index(symbol)]
+                            for symbol in available
+                        }
+                    )
+                    portfolio_values = aligned_prices.mul(
+                        historical_quantities, axis=1
+                    ).sum(axis=1)
+                    portfolio_returns = portfolio_values.pct_change().dropna()
+                elif weights is not None:
+                    values = pd.Series(
+                        {
+                            symbol: sizing[normalized.index(symbol)]
+                            for symbol in available
+                        }
+                    )
+                    values = values / values.sum()
+                    allocation = values
+                    prices = (
+                        pd.concat(
+                            {symbol: histories[symbol] for symbol in available}, axis=1
+                        )
+                        .sort_index()
+                        .ffill()
+                        .dropna(how="any")
+                    )
+                    daily_returns = prices.pct_change().dropna()
+                    aligned_portfolio_prices = prices
+                    portfolio_returns = daily_returns.mul(allocation, axis=1).sum(
+                        axis=1
+                    )
+                    total_value = None
+                for position in positions:
+                    symbol = position["symbol"]
+                    position["allocation"] = (
+                        float(allocation[symbol])
+                        if sizing is not None or quantities is not None
+                        else None
+                    )
+                aggregate: dict[str, Any] = {"currentValue": total_value}
+                if len(portfolio_returns):
+                    aggregate.update(
+                        {
+                            "totalReturn": float((1 + portfolio_returns).prod() - 1),
+                            "annualizedVolatility": float(
+                                portfolio_returns.std(ddof=1) * (252**0.5)
+                            )
+                            if len(portfolio_returns) > 1
+                            else None,
+                            "maxDrawdown": float(
+                                (
+                                    (1 + portfolio_returns).cumprod()
+                                    / (1 + portfolio_returns).cumprod().cummax()
+                                    - 1
+                                ).min()
+                            ),
+                        }
+                    )
+                    aggregate["weightingMethod"] = (
+                        "Fixed share quantities valued at adjusted historical closes"
+                        if quantities is not None
+                        else "Input weights applied to daily constituent returns"
+                    )
+                if benchmark and benchmark in histories and len(portfolio_returns):
+                    benchmark_prices = (
+                        histories[benchmark]
+                        .reindex(aligned_portfolio_prices.index)
+                        .ffill()
+                        .dropna()
+                    )
+                    benchmark_return = float(
+                        benchmark_prices.iloc[-1] / benchmark_prices.iloc[0] - 1
+                    )
+                    if currencies.get(benchmark) != currency:
+                        aggregate["benchmarkError"] = (
+                            "Benchmark comparison requires the same reported currency as the portfolio."
+                        )
+                    else:
+                        aggregate["benchmark"] = benchmark
+                        aggregate["benchmarkReturn"] = benchmark_return
+                        aggregate["benchmarkRelativeReturn"] = (
+                            aggregate["totalReturn"] - benchmark_return
+                        )
+                result["aggregate"] = to_json_compatible(aggregate)
+                result["allocation"] = to_json_compatible(
+                    {symbol: float(allocation[symbol]) for symbol in available}
+                )
+            if errors:
+                result["errors"] = errors
+            return to_json_compatible(result)
         except Exception as exc:
             return error_result(_error_code(exc), str(exc))
 
@@ -1452,6 +1716,7 @@ TOOL_NAMES = (
     "get_company_overview",
     "get_symbol_comparison",
     "get_performance_analysis",
+    "get_portfolio_analysis",
     "get_stock_price_by_date",
     "get_stock_price_date_range",
     "get_historical_stock_prices",
