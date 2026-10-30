@@ -145,6 +145,7 @@ Use Yahoo Finance ticker symbols for `symbol` values. Examples are `AAPL` and `M
 | `get_company_overview` | Gets a company profile with its sector, industry, market value, website, employee count, description, and source data. |
 | `get_symbol_comparison` | Compares current quotes for up to 20 symbols. |
 | `get_performance_analysis` | Compares returns, moving averages, volatility, drawdown, benchmark returns, and correlation for multiple symbols. |
+| `get_portfolio_analysis` | Calculates position values and allocations from quantities, weighted portfolio returns from weights, or per-symbol watchlist metrics without sizing. |
 | `get_stock_price_by_date` | Gets the adjusted closing price for one trading date. |
 | `get_stock_price_date_range` | Gets adjusted closing prices for a date range. |
 | `get_historical_stock_prices` | Gets past prices for a period and time interval. |
@@ -173,6 +174,8 @@ Annual volatility is the standard deviation of daily returns multiplied by `sqrt
 Maximum drawdown is the largest fall from a previous high.
 
 The tool calculates correlation from daily returns on dates shared by the symbols. This lets it compare symbols that have different trading calendars.
+
+`get_portfolio_analysis` accepts `symbols`, `start_date`, and `end_date`, plus either `quantities`, `weights`, or neither. Quantities report current market value and value-based allocations. Weights are normalized and applied to daily adjusted returns. Omitting both quantities and weights selects watchlist mode and returns per-symbol metrics without portfolio totals. Historical performance uses adjusted close prices; current market values use Yahoo's current quote. Portfolio totals require every available position to report the same currency. Missing history or quotes are omitted and described in `errors`. Unequal trading calendars use forward-filled closes for aggregate daily returns.
 
 ## Develop locally
 

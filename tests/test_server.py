@@ -18,6 +18,7 @@ def client_tools() -> list[Tool]:
         generate_tool(yf.get_company_overview),
         generate_tool(yf.get_symbol_comparison),
         generate_tool(yf.get_performance_analysis),
+        generate_tool(yf.get_portfolio_analysis),
         generate_tool(yf.get_stock_price_by_date),
         generate_tool(yf.get_stock_price_date_range),
         generate_tool(yf.get_historical_stock_prices),
@@ -46,6 +47,7 @@ def client_tools() -> list[Tool]:
         "get_company_overview",
         "get_symbol_comparison",
         "get_performance_analysis",
+        "get_portfolio_analysis",
         "get_stock_price_by_date",
         "get_stock_price_date_range",
         "get_historical_stock_prices",
@@ -470,6 +472,107 @@ def test_multi_symbol_schema_uses_arrays():
         "items": {"type": "string"},
         "description": "One to 10 Yahoo Finance symbols to analyze.",
     }
+
+
+def test_portfolio_analysis_computes_values_weights_and_benchmark():
+    import pandas as pd
+
+    frames = [
+        pd.DataFrame(
+            {"Close": [100.0, 110.0, 105.0]},
+            index=pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"]),
+        ),
+        pd.DataFrame(
+            {"Close": [50.0, 55.0]}, index=pd.to_datetime(["2025-01-02", "2025-01-06"])
+        ),
+        pd.DataFrame(
+            {"Close": [200.0, 210.0, 205.0]},
+            index=pd.to_datetime(["2025-01-02", "2025-01-03", "2025-01-06"]),
+        ),
+    ]
+    tickers = [
+        MagicMock(
+            history=MagicMock(return_value=frame),
+            info={"regularMarketPrice": price, "currency": "USD"},
+        )
+        for frame, price in zip(frames, (105.0, 55.0, 205.0), strict=True)
+    ]
+    with patch("mcp_yahoo_finance.server.Ticker", side_effect=tickers):
+        result = YahooFinance().get_portfolio_analysis(
+            ["aapl", "msft"],
+            "2025-01-01",
+            "2025-01-07",
+            quantities=[2, 3],
+            benchmark_symbol="spy",
+        )
+
+    assert result["mode"] == "portfolio"
+    assert result["aggregate"]["currentValue"] == 375.0
+    assert result["allocation"]["AAPL"] == pytest.approx(210 / 375)
+    assert result["aggregate"]["benchmark"] == "SPY"
+    assert result["aggregate"]["benchmarkRelativeReturn"] == pytest.approx(
+        result["aggregate"]["totalReturn"] - result["aggregate"]["benchmarkReturn"]
+    )
+    assert result["adjustedHistoricalPrices"] is True
+
+
+def test_portfolio_watchlist_and_validation_and_partial_data():
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"Close": [10.0, 11.0]}, index=pd.to_datetime(["2025-01-02", "2025-01-03"])
+    )
+    with patch(
+        "mcp_yahoo_finance.server.Ticker",
+        side_effect=[
+            MagicMock(
+                history=MagicMock(return_value=frame),
+                info={"regularMarketPrice": 11.0, "currency": "USD"},
+            ),
+            MagicMock(history=MagicMock(return_value=pd.DataFrame()), info={}),
+        ],
+    ):
+        result = YahooFinance().get_portfolio_analysis(
+            ["AAA", "BBB"], "2025-01-01", "2025-01-03"
+        )
+
+    assert result["mode"] == "watchlist"
+    assert result["symbols"] == ["AAA"]
+    assert result["errors"][0]["symbol"] == "BBB"
+    assert "aggregate" not in result
+    assert "error" in YahooFinance().get_portfolio_analysis(
+        ["aaa", "AAA"], "2025-01-01", "2025-01-03"
+    )
+    assert "error" in YahooFinance().get_portfolio_analysis(
+        ["aaa"], "2025-01-01", "2025-01-03", quantities=[0]
+    )
+
+
+def test_portfolio_does_not_sum_different_currencies():
+    import pandas as pd
+
+    frame = pd.DataFrame(
+        {"Close": [10.0, 11.0]}, index=pd.to_datetime(["2025-01-02", "2025-01-03"])
+    )
+    with patch(
+        "mcp_yahoo_finance.server.Ticker",
+        side_effect=[
+            MagicMock(
+                history=MagicMock(return_value=frame),
+                info={"regularMarketPrice": 11.0, "currency": "USD"},
+            ),
+            MagicMock(
+                history=MagicMock(return_value=frame),
+                info={"regularMarketPrice": 11.0, "currency": "EUR"},
+            ),
+        ],
+    ):
+        result = YahooFinance().get_portfolio_analysis(
+            ["AAA", "BBB"], "2025-01-01", "2025-01-03", weights=[1, 1]
+        )
+
+    assert result["aggregateError"].startswith("Aggregate values require")
+    assert "aggregate" not in result
 
 
 def test_news_is_normalized_bounded_and_supports_date_filters():
