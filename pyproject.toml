@@ -18,7 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["mcp>=2.3.0", "yfinance>=1.7.0"]
+dependencies = ["mcp>=2.3.0", "yfinance>=1.8.0"]
 
 [project.scripts]
 mcp-yahoo-finance = "mcp_yahoo_finance:main"
@@ -37,7 +37,7 @@ build-backend = "hatchling.build"
 dev = [
     "pre-commit>=4.6.2",
     "pytest-asyncio>=1.4.0",
-    "pytest>=9.1.1",
+    "pytest>=9.2.0",
     "ruff>=0.17.6",
 ]
 
